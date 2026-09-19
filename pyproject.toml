@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragnar-bridge"
+version = "0.1.0"
+description = "Puente entre el CLI de Claude en tu propio servidor y Ragnar: se conecta por WebSocket saliente, tus credenciales no salen de tu maquina."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["websockets>=13.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+ragnar-bridge = "ragnar_bridge.cli:main"
+
+[tool.setuptools]
+packages = ["ragnar_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
