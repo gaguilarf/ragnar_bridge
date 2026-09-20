@@ -270,5 +270,3 @@ arme el comando y traduzca sus eventos al formato de Claude Code (ver
 - Cuota real de la suscripción como comando del protocolo (hoy `POST /claude/quota`
   responde 501).
 - Tools de tickets de Ragnar (MCP) para Antigravity.
-- Repositorio público (o instalador servido por el panel): mientras sea privado,
-  el comando de instalación no funciona para otros usuarios.
