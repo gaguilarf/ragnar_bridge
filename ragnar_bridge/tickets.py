@@ -9,13 +9,18 @@ from .protocolo import Turno
 
 
 def url_mcp_tickets(ws_url: str) -> Optional[str]:
-    """https://<panel>/api/v1/mcp a partir de wss://<panel>/api/v1/bridge/ws."""
+    """https://<panel>/api/v1/mcp/ a partir de wss://<panel>/api/v1/bridge/ws.
+
+    CON la barra final: el backend monta el MCP en /api/v1/mcp/ y, detras del
+    proxy de produccion, `POST /api/v1/mcp` (sin barra) responde 405 en vez de
+    redirigir -- Claude Code no llegaba a conectar y el agente se quedaba sin
+    tools de tickets."""
     partes = urlsplit(ws_url)
     sufijo = "/bridge/ws"
     if not partes.path.endswith(sufijo):
         return None
     esquema = "https" if partes.scheme == "wss" else "http"
-    ruta = partes.path[: -len(sufijo)] + "/mcp"
+    ruta = partes.path[: -len(sufijo)] + "/mcp/"
     return urlunsplit((esquema, partes.netloc, ruta, "", ""))
 
 

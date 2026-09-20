@@ -180,6 +180,6 @@ def test_conceder_no_duplica(tmp_path):
 
 
 def test_url_mcp_tickets():
-    assert url_mcp_tickets("wss://panel.ragnargroup.app/api/v1/bridge/ws") == "https://panel.ragnargroup.app/api/v1/mcp"
-    assert url_mcp_tickets("ws://localhost:8000/api/v1/bridge/ws") == "http://localhost:8000/api/v1/mcp"
+    assert url_mcp_tickets("wss://panel.ragnargroup.app/api/v1/bridge/ws") == "https://panel.ragnargroup.app/api/v1/mcp/"
+    assert url_mcp_tickets("ws://localhost:8000/api/v1/bridge/ws") == "http://localhost:8000/api/v1/mcp/"
     assert url_mcp_tickets("wss://otro/ws") is None

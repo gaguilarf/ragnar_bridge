@@ -150,7 +150,7 @@ def test_el_entorno_de_cada_turno_lleva_su_propio_token(tmp_path):
     beto = agy.entorno(_turno(tickets_token="ragagt_beto"))
     assert ana["RAGNAR_TICKETS_TOKEN"] == "ragagt_ana"
     assert beto["RAGNAR_TICKETS_TOKEN"] == "ragagt_beto"
-    assert ana["RAGNAR_TICKETS_URL"] == "https://panel.ejemplo.app/api/v1/mcp"
+    assert ana["RAGNAR_TICKETS_URL"] == "https://panel.ejemplo.app/api/v1/mcp/"
 
 
 def test_sin_token_de_turno_el_entorno_no_hereda_uno_viejo(tmp_path, monkeypatch):

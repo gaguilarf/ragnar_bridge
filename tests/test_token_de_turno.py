@@ -57,7 +57,7 @@ def test_cada_conversacion_tiene_su_propio_archivo_de_mcp(tmp_path):
     leer = lambda ruta: json.loads(open(ruta, encoding="utf-8").read())["mcpServers"]["tickets"]
     assert leer(ruta_a)["headers"]["Authorization"] == "Bearer ragagt_de_ana"
     assert leer(ruta_b)["headers"]["Authorization"] == "Bearer ragagt_de_beto"
-    assert leer(ruta_a)["url"] == "https://panel.ejemplo.app/api/v1/mcp"
+    assert leer(ruta_a)["url"] == "https://panel.ejemplo.app/api/v1/mcp/"
 
 
 def test_sin_token_no_se_escribe_ninguna_config(tmp_path):

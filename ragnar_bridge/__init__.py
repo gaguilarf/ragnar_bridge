@@ -2,7 +2,7 @@
 servidor y le reenvia a Ragnar lo que emite, por una conexion WebSocket
 saliente. Ver README.md."""
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 # Version del protocolo de bridge_hub.py (ragnar_group_back). Si Ragnar habla
 # otra, rechaza la conexion con un mensaje pidiendo actualizar el bridge.
