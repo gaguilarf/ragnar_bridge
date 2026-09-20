@@ -251,14 +251,30 @@ instalador con `--name otro` y el token del segundo.
 | El servicio no reintenta y sale con 78 | Ragnar rechazó el token | es a propósito: generá un token nuevo |
 | (agy) el agente dice que no pudo ejecutar un comando | agy denegó la herramienta | aprobá la tarjeta en la app, o `agy_permisos` |
 | (agy) un turno largo se corta a los 30 min | `agy_timeout` | subilo en el config (`"2h"`) |
+| El agente dice que no tiene las tools de tickets | bridge anterior a la 0.3.3 (usaba una URL del MCP que Ragnar rechaza) | actualizá (arriba) y abrí una conversación nueva |
 | (claude) *«No conversation found»* / *«Session ID already in use»* | el bridge ya lo evita (comprueba la sesión y limpia el lock) | si aparece igual, abrí un issue con el log |
 
 ## Actualizar
 
+Cuando Ragnar o el chat te pida «actualizar el bridge» (o `doctor` diga que el protocolo no es soportado), en el VPS donde corre:
+
 ```sh
-~/.local/share/ragnar-bridge/venv/bin/pip install --upgrade git+https://github.com/gaguilarf/ragnar_bridge
+# 1. Ver qué versión tenés
+~/.local/share/ragnar-bridge/venv/bin/ragnar-bridge --version
+
+# 2. Actualizar (--force-reinstall para que traiga el código nuevo aunque la versión no haya cambiado)
+~/.local/share/ragnar-bridge/venv/bin/pip install --upgrade --force-reinstall --no-deps git+https://github.com/gaguilarf/ragnar_bridge
+
+# 3. Reiniciar el servicio y comprobar
 systemctl --user restart ragnar-bridge
+~/.local/share/ragnar-bridge/venv/bin/ragnar-bridge doctor
 ```
+
+Tu configuración (`~/.config/ragnar-bridge/config.json`, con el token del servidor) no se toca. Reiniciar corta una conversación que esté corriendo en ese momento: hacelo cuando nadie esté usando el chat.
+
+Si preferís, volver a correr el comando de instalación que muestra la app (Paso 4) también actualiza y reinicia.
+
+Versiones que importan: **0.3.2** manda a cada turno el token de tickets de quien escribe; **0.3.3** arregla la URL del MCP de tickets (sin ella el agente decía que no tenía las tools de tickets).
 
 ## Desinstalar
 
