@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import random
-import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -13,15 +12,9 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from . import PROTOCOLO, __version__
+from .agents import crear_adaptador
 from .config import Config, ruta_por_defecto
-from .runner import (
-    RunInvalido,
-    conceder_permiso,
-    construir_comando,
-    escribir_mcp_config,
-    limpiar_lock_sesion,
-    validar_run,
-)
+from .protocolo import RunInvalido, validar_run
 
 log = logging.getLogger("ragnar_bridge")
 
@@ -39,20 +32,11 @@ class ErrorFatal(Exception):
     (token revocado/invalido, protocolo incompatible)."""
 
 
-def version_cli(cfg: Config) -> str:
-    try:
-        salida = subprocess.run(
-            [*cfg.claude_cmd, "--version"], capture_output=True, text=True, timeout=20
-        )
-        return (salida.stdout or salida.stderr).strip()[:80] or "desconocida"
-    except (OSError, subprocess.SubprocessError):
-        return "no encontrado"
-
-
 class Bridge:
     def __init__(self, cfg: Config, estado_dir: Optional[Path] = None):
         self.cfg = cfg
         self.estado_dir = estado_dir or ruta_por_defecto().parent
+        self.adaptador = crear_adaptador(cfg, self.estado_dir)
         self._ws = None
         self._envio = asyncio.Lock()
         self._procesos: Dict[str, asyncio.subprocess.Process] = {}
@@ -77,8 +61,8 @@ class Bridge:
                     "token": self.cfg.token,
                     "protocol": PROTOCOLO,
                     "version": __version__,
-                    "agent": "claude",
-                    "cli_version": version_cli(self.cfg),
+                    "agent": self.adaptador.nombre,
+                    "cli_version": self.adaptador.version(),
                 }
             )
         )
@@ -131,23 +115,25 @@ class Bridge:
 
     async def _turno(self, task_id: str, run: dict) -> None:
         try:
-            session_id, prompt, fallback, system_append, conceder = validar_run(run)
+            turno = validar_run(run)
         except RunInvalido as e:
             await self.enviar({"type": "error", "task_id": task_id, "message": f"run invalido: {e}"})
             return
 
-        if conceder and not conceder_permiso(self.cfg, conceder):
-            log.warning("No se pudo conceder el permiso %r (patron bloqueado o settings.json ilegible).", conceder)
-
-        limpiar_lock_sesion(self.cfg, session_id)
-        mcp = escribir_mcp_config(self.cfg, self.estado_dir, self.username)
-        cmd, env = construir_comando(self.cfg, session_id, prompt, fallback, system_append, mcp)
+        try:
+            comando = self.adaptador.preparar(turno, self.username)
+        except OSError as e:
+            await self.enviar(
+                {"type": "error", "task_id": task_id, "message": f"No se pudo preparar el turno: {e}"}
+            )
+            return
+        traductor = self.adaptador.traductor(turno)
 
         try:
             proceso = await asyncio.create_subprocess_exec(
-                *cmd,
+                *comando.argv,
                 cwd=self.cfg.workdir_abs,
-                env=env,
+                env=comando.env,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -162,7 +148,7 @@ class Bridge:
                 {
                     "type": "error",
                     "task_id": task_id,
-                    "message": f"No se pudo lanzar el CLI ({' '.join(self.cfg.claude_cmd)}) en {self.cfg.workdir_abs}: {e}",
+                    "message": f"No se pudo lanzar el CLI ({' '.join(self.adaptador.cmd)}) en {self.cfg.workdir_abs}: {e}",
                 }
             )
             return
@@ -200,16 +186,17 @@ class Bridge:
                 except json.JSONDecodeError:
                     continue  # linea suelta que no es del protocolo
                 if isinstance(evento, dict):
-                    await self.enviar({"type": "event", "task_id": task_id, "raw": evento})
+                    # El traductor convierte lo que emite el CLI al formato de
+                    # Claude que Ragnar espera (para Claude no toca nada).
+                    for raw in traductor.evento(evento):
+                        await self.enviar({"type": "event", "task_id": task_id, "raw": raw})
             codigo = await proceso.wait()
             await lector_err
+            stderr = bytes(stderr_buf).decode("utf-8", errors="replace")
+            for raw in traductor.fin(codigo, stderr):
+                await self.enviar({"type": "event", "task_id": task_id, "raw": raw})
             await self.enviar(
-                {
-                    "type": "done",
-                    "task_id": task_id,
-                    "exit_code": codigo,
-                    "stderr": bytes(stderr_buf).decode("utf-8", errors="replace"),
-                }
+                {"type": "done", "task_id": task_id, "exit_code": codigo, "stderr": stderr}
             )
         except asyncio.CancelledError:
             await self._matar_proceso(proceso)
@@ -278,3 +265,27 @@ async def ejecutar(cfg: Config, estado_dir: Optional[Path] = None) -> None:
         # Jitter: si Ragnar se reinicia, todos los bridges reconectan a la vez.
         await asyncio.sleep(espera + random.uniform(0, espera / 2))
         espera = min(espera * 2, 60.0)
+
+
+async def probar_conexion(cfg: Config) -> str:
+    """Abre el socket, se autentica y se desconecta, sin correr ningun turno
+    (no gasta cuota). Devuelve el nombre del servidor segun Ragnar; levanta
+    ErrorFatal si Ragnar rechaza la credencial, o el error de red que sea."""
+    adaptador = crear_adaptador(cfg, ruta_por_defecto().parent)
+    async with connect(cfg.url, max_size=MAX_FRAME, open_timeout=15) as ws:
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "auth",
+                    "token": cfg.token,
+                    "protocol": PROTOCOLO,
+                    "version": __version__,
+                    "agent": adaptador.nombre,
+                    "cli_version": adaptador.version(),
+                }
+            )
+        )
+        respuesta = json.loads(await asyncio.wait_for(ws.recv(), 15))
+    if respuesta.get("type") == "error":
+        raise ErrorFatal(respuesta.get("message") or respuesta.get("code"))
+    return str(respuesta.get("nombre") or "")

@@ -1,0 +1,288 @@
+"""Antigravity CLI (`agy`, github.com/google-antigravity/antigravity-cli).
+
+Diferencias con Claude Code que el adaptador absorbe (verificado contra agy
+1.1.27, ver tests/test_agy.py para las formas reales de los eventos):
+
+* Su stream-json es otro (`init`/`step_update`/`result`): `TraductorAgy` lo
+  convierte al formato de Claude que Ragnar espera.
+* No hay `--session-id`: agy asigna el id de conversacion y lo informa en
+  `init`. Se guarda la correspondencia session_id(Ragnar) -> conversation_id en
+  `agy-estado.json` y los turnos siguientes usan `--conversation`.
+* No hay `--append-system-prompt`: las instrucciones de Ragnar se anteponen al
+  prompt del primer turno de cada conversacion (despues viven en el hilo).
+* En modo headless una herramienta que pide permiso se DENIEGA sola (y
+  `permissions.allow` de su settings.json se ignora en headless, issue #548 de
+  antigravity-cli). La salida es `--dangerously-skip-permissions`, que aprueba
+  TODO. Por eso el bridge no lo pasa de entrada: deja que agy deniegue, le
+  cuenta a Ragnar que hace falta un permiso (marcador [[PERMISO]], el mismo
+  flujo de la tarjeta "Autorizar" que Claude) y, solo si el humano aprueba,
+  relanza esa conversacion con el flag. Ver `Config.agy_permisos`.
+"""
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from ..config import Config
+from ..protocolo import Turno
+from .base import Adaptador, Comando, Traductor
+
+log = logging.getLogger("ragnar_bridge")
+
+# Lo que Ragnar recibe como `herramienta` del permiso pedido. Es una etiqueta,
+# no un patron: agy no concede por herramienta en headless, concede la
+# conversacion entera.
+PERMISO_AGY = "agy:permisos"
+
+_SEPARADOR = "\n\n---\n\n"
+
+
+def conversacion_existe(cfg: Config, conversation_id: str) -> bool:
+    """agy guarda cada conversacion como <agy_dir>/conversations/<id>.db."""
+    ruta = Path(os.path.expanduser(cfg.agy_dir)) / "conversations" / f"{conversation_id}.db"
+    return ruta.is_file()
+
+
+class AgyAdaptador(Adaptador):
+    nombre = "agy"
+
+    @property
+    def cmd(self) -> List[str]:
+        return self.cfg.agy_cmd
+
+    # ---- estado propio (session_id de Ragnar -> conversacion de agy)
+
+    @property
+    def _ruta_estado(self) -> Path:
+        return self.estado_dir / "agy-estado.json"
+
+    def _leer(self) -> Dict[str, dict]:
+        try:
+            datos = json.loads(self._ruta_estado.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        sesiones = datos.get("sesiones") if isinstance(datos, dict) else None
+        return sesiones if isinstance(sesiones, dict) else {}
+
+    def _guardar(self, sesiones: Dict[str, dict]) -> None:
+        self.estado_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self._ruta_estado.with_name(self._ruta_estado.name + f".tmp-{os.getpid()}")
+        tmp.write_text(json.dumps({"sesiones": sesiones}, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, self._ruta_estado)
+
+    def actualizar_sesion(self, session_id: str, **campos) -> None:
+        sesiones = self._leer()
+        sesiones.setdefault(session_id, {}).update(campos)
+        self._guardar(sesiones)
+
+    # ---- comando
+
+    def preparar(self, turno: Turno, username: str) -> Comando:
+        cfg = self.cfg
+        sesion = self._leer().get(turno.session_id, {})
+        conversacion = sesion.get("conversation_id")
+        reanudar = bool(conversacion) and conversacion_existe(cfg, conversacion)
+
+        permisos = bool(sesion.get("permisos"))
+        if turno.conceder and cfg.agy_permisos == "preguntar" and not permisos:
+            # El humano aprobo en la app: desde ahora esta conversacion corre
+            # con las herramientas aprobadas.
+            permisos = True
+            self.actualizar_sesion(turno.session_id, permisos=True)
+        elif turno.conceder and cfg.agy_permisos != "preguntar":
+            log.warning("Ragnar pidio conceder un permiso pero agy_permisos=%r: se ignora.", cfg.agy_permisos)
+
+        auto = cfg.agy_permisos == "auto" or (permisos and cfg.agy_permisos == "preguntar")
+
+        if reanudar:
+            texto = turno.prompt
+        elif turno.system_append:
+            texto = turno.system_append + _SEPARADOR + turno.prompt_fallback
+        else:
+            texto = turno.prompt_fallback
+        # El prompt va PEGADO al flag (`-p=<prompt>`, un solo argumento): con
+        # `-p <prompt>` agy toma como prompt lo que venga despues, y si es un
+        # flag ("--output-format") falla; y un prompt que empieza con "-" (o
+        # tiene saltos de linea) tampoco se confunde con un flag. Es la forma
+        # que el propio agy recomienda en su mensaje de error.
+        argv = [
+            *cfg.agy_cmd,
+            f"-p={texto}",
+            "--output-format",
+            "stream-json",
+            "--print-timeout",
+            cfg.agy_timeout,
+        ]
+        if cfg.agy_model:
+            argv += ["--model", cfg.agy_model]
+        for d in cfg.add_dirs:
+            argv += ["--add-dir", os.path.abspath(os.path.expanduser(d))]
+        if reanudar:
+            argv += ["--conversation", conversacion]
+        if auto:
+            argv.append("--dangerously-skip-permissions")
+        return Comando(argv, os.environ.copy())
+
+    def traductor(self, turno: Turno) -> "TraductorAgy":
+        return TraductorAgy(self, turno)
+
+
+class TraductorAgy(Traductor):
+    """Convierte los eventos de agy al stream-json de Claude que Ragnar parsea:
+
+      init                       -> (guarda conversation_id)
+      step agent_response        -> stream_event / content_block_delta / text_delta
+      step tool ACTIVE           -> assistant / tool_use
+      step tool DONE|ERROR       -> user / tool_result
+      result                     -> [marcador de permiso] + result
+    """
+
+    def __init__(self, adaptador: AgyAdaptador, turno: Turno):
+        self._ad = adaptador
+        self._turno = turno
+        self.conversation_id: Optional[str] = None
+        # Uso sumado de los pasos de ESTE proceso. `result.usage` de agy es
+        # acumulado de toda la conversacion, y Ragnar suma el uso de cada
+        # turno: usarlo tal cual contaria dos veces lo de los turnos previos.
+        self._entrada = 0
+        self._salida = 0
+        self._cache = 0
+        # Herramientas que agy nego por falta de permiso: nombre -> parametros.
+        self._denegadas: List[dict] = []
+        self._herramientas: Dict[int, dict] = {}
+        self._resultado_emitido = False
+
+    @staticmethod
+    def _texto(texto: str) -> dict:
+        return {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": texto}},
+        }
+
+    def evento(self, linea: dict) -> List[dict]:
+        tipo = linea.get("event")
+        if tipo == "init":
+            self.conversation_id = linea.get("conversation_id") or self.conversation_id
+            return []
+        if tipo == "step_update":
+            return self._paso(linea.get("step_update") or {})
+        if tipo == "result":
+            return self._resultado(linea.get("result") or {})
+        return []
+
+    def _paso(self, paso: dict) -> List[dict]:
+        self.conversation_id = paso.get("conversation_id") or self.conversation_id
+        tipo, estado = paso.get("step_type"), paso.get("state")
+
+        if tipo == "agent_response":
+            uso = paso.get("usage") or {}
+            if estado == "DONE" and uso:
+                self._entrada += int(uso.get("input_tokens") or 0)
+                self._salida += int(uso.get("output_tokens") or 0)
+                self._cache += int(uso.get("cache_read_tokens") or 0)
+            texto = paso.get("text_delta") or ""
+            return [self._texto(texto)] if texto else []
+
+        if tipo == "tool":
+            idx = paso.get("step_index")
+            info = paso.get("tool_info") or {}
+            id_herramienta = f"{paso.get('conversation_id') or self.conversation_id}:{idx}"
+            if estado == "ACTIVE":
+                self._herramientas[idx] = {
+                    "name": paso.get("tool_name") or info.get("name"),
+                    "input": info.get("parameters") or {},
+                }
+                return [
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": id_herramienta,
+                                    "name": self._herramientas[idx]["name"],
+                                    "input": self._herramientas[idx]["input"],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            if estado in ("DONE", "ERROR"):
+                error = info.get("error") or {}
+                contenido = error.get("message") if estado == "ERROR" else info.get("output")
+                if estado == "ERROR" and "permission" in str(contenido or "").lower():
+                    self._denegadas.append(self._herramientas.get(idx, {}))
+                return [
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": id_herramienta,
+                                    "content": str(contenido or ""),
+                                    "is_error": estado == "ERROR",
+                                }
+                            ]
+                        },
+                    }
+                ]
+        return []
+
+    def _resultado(self, resultado: dict) -> List[dict]:
+        salida: List[dict] = []
+        denegadas = resultado.get("denied_actions") or []
+        exito = resultado.get("status") == "SUCCESS"
+
+        if denegadas:
+            salida.append(self._texto(self._aviso_permiso(denegadas)))
+
+        evento = {
+            "type": "result",
+            "is_error": not exito,
+            "usage": {
+                "input_tokens": self._entrada,
+                "output_tokens": self._salida,
+                "cache_read_input_tokens": self._cache,
+                "cache_creation_input_tokens": 0,
+            },
+        }
+        if not exito:
+            evento["result"] = str(resultado.get("response") or resultado.get("status") or "agy termino con error.")
+        salida.append(evento)
+        self._resultado_emitido = True
+        return salida
+
+    def _aviso_permiso(self, denegadas: List[dict]) -> str:
+        """Texto FINAL del turno cuando agy nego una herramienta. Con
+        agy_permisos=preguntar lleva el marcador [[PERMISO]] (tiene que ser lo
+        ultimo del turno para que Ragnar lo tome); con otro modo solo avisa."""
+        acciones = ", ".join(sorted({str(d.get("display_name") or d.get("action")) for d in denegadas}))
+        detalle = "; ".join(
+            f"{h.get('name')}: {json.dumps(h.get('input'), ensure_ascii=False)[:200]}"
+            for h in self._denegadas
+            if h
+        )
+        if self._ad.cfg.agy_permisos != "preguntar":
+            return (
+                f"\n\nAntigravity necesita permiso para: {acciones}, pero este servidor "
+                f"esta configurado con agy_permisos={self._ad.cfg.agy_permisos!r} y no se "
+                "lo puede conceder desde la app."
+            )
+        motivo = f"Antigravity necesita permiso para: {acciones}"
+        if detalle:
+            motivo += f" ({detalle})"
+        motivo += ". Al autorizar, esta conversacion corre con las herramientas aprobadas."
+        marcador = {"herramienta": PERMISO_AGY, "motivo": motivo[:500]}
+        return f"\n\n[[PERMISO]]{json.dumps(marcador, ensure_ascii=False)}[[/PERMISO]]"
+
+    def fin(self, codigo: Optional[int], stderr: str) -> List[dict]:
+        if self.conversation_id:
+            self._ad.actualizar_sesion(self._turno.session_id, conversation_id=self.conversation_id)
+        return []

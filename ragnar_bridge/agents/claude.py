@@ -1,68 +1,29 @@
-"""Todo lo que toca el CLI de Claude en esta maquina: armar su comando, saber
-si una sesion sigue viva, conceder permisos y escribir el MCP de tickets.
+"""Claude Code: armar su comando, saber si una sesion sigue viva, conceder
+permisos y escribir el MCP de tickets.
 
 Es la parte que antes vivia dentro de claude_orchestrator.py en el servidor de
 Ragnar (con CLAUDE_CONFIG_DIR por usuario); ahora corre aca, sobre TU sesion.
 """
 
 import json
+import logging
 import os
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
-from .config import Config
-
-# El session_id llega de Ragnar y termina dentro de rutas (session-env/<id>,
-# projects/.../<id>.jsonl): se exige forma de UUID para que un valor raro no
-# pueda salirse de esas carpetas con "../".
-_PATRON_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+from ..config import Config
+from ..protocolo import Turno, permiso_es_catastrofico
+from .base import Adaptador, Comando
 
 # El CLI real sanea CUALQUIER caracter no alfanumerico del cwd a "-" para
 # nombrar la carpeta de proyecto bajo <config_dir>/projects/ (verificado
 # contra carpetas reales: un repo con "_" cae en una carpeta con "-").
 _PATRON_NO_ALFANUMERICO = re.compile(r"[^a-zA-Z0-9]")
 
-# Mismos patrones que permiso_es_catastrofico de claude_orchestrator.py: aunque
-# Ragnar ya los filtra, el bridge es quien escribe en TU settings.json -- no
-# confia en que el filtro de afuera siga ahi.
-_PATRONES_PROHIBIDOS = (":(){ :|:& };:", "mkfs", "> /dev/sd")
-_PATRON_RM_RAIZ = re.compile(r"rm\s+-[a-zA-Z-]*\s+/(?:\s|[\"')*]|$)")
-
-
-class RunInvalido(Exception):
-    """El `run` de Ragnar no tiene la forma esperada."""
-
-
-def validar_run(run: dict) -> Tuple[str, str, str, str, Optional[str]]:
-    """(session_id, prompt, prompt_fallback, system_append, conceder)."""
-    session_id = run.get("session_id")
-    if not isinstance(session_id, str) or not _PATRON_UUID.match(session_id):
-        raise RunInvalido("session_id invalido")
-    prompt = run.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip():
-        raise RunInvalido("prompt vacio")
-    fallback = run.get("prompt_fallback")
-    if not isinstance(fallback, str) or not fallback.strip():
-        fallback = prompt
-    system_append = run.get("system_append")
-    if not isinstance(system_append, str):
-        system_append = ""
-    conceder = run.get("conceder")
-    if conceder is not None and not isinstance(conceder, str):
-        raise RunInvalido("conceder invalido")
-    return session_id, prompt, fallback, system_append, conceder or None
-
-
-def permiso_es_catastrofico(tool: str) -> bool:
-    chico = tool.strip().lower()
-    if chico in ("bash(*)", "bash( * )", "*"):
-        return True
-    if _PATRON_RM_RAIZ.search(chico):
-        return True
-    return any(p in chico for p in _PATRONES_PROHIBIDOS)
+log = logging.getLogger("ragnar_bridge")
 
 
 def hay_sesion(cfg: Config, session_id: str) -> bool:
@@ -155,19 +116,32 @@ def escribir_mcp_config(cfg: Config, estado_dir: Path, username: str) -> Optiona
     return str(ruta)
 
 
-def construir_comando(
-    cfg: Config,
-    session_id: str,
-    prompt: str,
-    prompt_fallback: str,
-    system_append: str,
-    mcp_config: Optional[str],
-) -> Tuple[List[str], Dict[str, str]]:
+class ClaudeAdaptador(Adaptador):
+    nombre = "claude"
+
+    @property
+    def cmd(self) -> List[str]:
+        return self.cfg.claude_cmd
+
+    def preparar(self, turno: Turno, username: str) -> Comando:
+        cfg = self.cfg
+        if turno.conceder and not conceder_permiso(cfg, turno.conceder):
+            # No se corta el turno: sin el permiso Claude vuelve a pedirlo.
+            log.warning(
+                "No se pudo conceder el permiso %r (patron bloqueado o settings.json ilegible).",
+                turno.conceder,
+            )
+        limpiar_lock_sesion(cfg, turno.session_id)
+        mcp = escribir_mcp_config(cfg, self.estado_dir, username)
+        return construir_comando(cfg, turno, mcp)
+
+
+def construir_comando(cfg: Config, turno: Turno, mcp_config: Optional[str]) -> Comando:
     """Comando y entorno de UN turno. Si la sesion sigue viva se retoma con
     `prompt`; si no, se abre con `prompt_fallback`, que ya trae el hilo
     anterior rehecho por prompt (ver prompt_con_contexto en Ragnar)."""
-    reanudar = hay_sesion(cfg, session_id)
-    texto = prompt if reanudar else prompt_fallback
+    reanudar = hay_sesion(cfg, turno.session_id)
+    texto = turno.prompt if reanudar else turno.prompt_fallback
     # Un prompt que empieza con "-" el CLI lo leeria como un flag.
     if texto.startswith("-"):
         texto = " " + texto
@@ -179,13 +153,13 @@ def construir_comando(
         "--include-partial-messages",
         "--verbose",
     ]
-    if system_append:
-        cmd += ["--append-system-prompt", system_append]
+    if turno.system_append:
+        cmd += ["--append-system-prompt", turno.system_append]
     if mcp_config:
         cmd += ["--mcp-config", mcp_config]
     if cfg.add_dirs:
         cmd += ["--add-dir", *[os.path.abspath(os.path.expanduser(d)) for d in cfg.add_dirs]]
-    cmd += ["--resume" if reanudar else "--session-id", session_id, texto]
+    cmd += ["--resume" if reanudar else "--session-id", turno.session_id, texto]
 
     env = os.environ.copy()
     # Solo se fija CLAUDE_CONFIG_DIR si la moviste de sitio: con la variable
@@ -194,4 +168,4 @@ def construir_comando(
     por_defecto = os.path.abspath(os.path.expanduser("~/.claude"))
     if cfg.config_dir_abs != por_defecto:
         env["CLAUDE_CONFIG_DIR"] = cfg.config_dir_abs
-    return cmd, env
+    return Comando(cmd, env)

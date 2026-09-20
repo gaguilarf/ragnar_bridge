@@ -2,7 +2,6 @@ import asyncio
 import json
 import sys
 import uuid
-from pathlib import Path
 
 import pytest
 from websockets.asyncio.server import serve
@@ -10,66 +9,9 @@ from websockets.asyncio.server import serve
 from ragnar_bridge import PROTOCOLO
 from ragnar_bridge.bridge import Bridge, ErrorFatal, ejecutar
 from ragnar_bridge.config import Config
-from ragnar_bridge.runner import conceder_permiso, permiso_es_catastrofico, url_mcp_tickets
-
-FAKE = str(Path(__file__).parent / "fake_claude.py")
-TOKEN = "ragbrg_test"
-
-
-class FakeRagnar:
-    """Servidor de Ragnar minimo: valida el `auth`, contesta `welcome` y deja
-    al test mandar frames y leer lo que el bridge emite."""
-
-    def __init__(self, token_valido=TOKEN, protocolo=PROTOCOLO):
-        self.token_valido = token_valido
-        self.protocolo = protocolo
-        self.recibidos: asyncio.Queue = asyncio.Queue()
-        self.auth_frame = None
-        self._ws = None
-        self.conectado = asyncio.Event()
-        self.cerrado = asyncio.Event()
-
-    async def _handler(self, ws):
-        self._ws = ws
-        frame = json.loads(await ws.recv())
-        self.auth_frame = frame
-        if frame.get("token") != self.token_valido:
-            await ws.send(json.dumps({"type": "error", "code": "auth", "message": "no"}))
-            await ws.close(code=1008)
-            return
-        if frame.get("protocol") != self.protocolo:
-            await ws.send(json.dumps({"type": "error", "code": "protocol", "message": "viejo"}))
-            await ws.close(code=1008)
-            return
-        await ws.send(json.dumps({"type": "welcome", "bridge_id": 1, "nombre": "t", "username": "gus", "protocol": PROTOCOLO}))
-        self.conectado.set()
-        try:
-            async for crudo in ws:
-                await self.recibidos.put(json.loads(crudo))
-        finally:
-            self.cerrado.set()
-
-    async def enviar(self, msg: dict):
-        await self._ws.send(json.dumps(msg))
-
-    async def hasta_done(self, task_id: str, timeout=15):
-        eventos = []
-        while True:
-            msg = await asyncio.wait_for(self.recibidos.get(), timeout)
-            if msg.get("task_id") != task_id:
-                continue
-            if msg["type"] == "event":
-                eventos.append(msg["raw"])
-            else:
-                return eventos, msg
-
-
-@pytest.fixture
-async def ragnar():
-    servidor = FakeRagnar()
-    async with serve(servidor._handler, "127.0.0.1", 0) as srv:
-        servidor.url = f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}"
-        yield servidor
+from helpers import FAKE, TOKEN, FakeRagnar, run as _run
+from ragnar_bridge.agents.claude import conceder_permiso, url_mcp_tickets
+from ragnar_bridge.protocolo import permiso_es_catastrofico
 
 
 def _cfg(tmp_path, ragnar, **kw) -> Config:
@@ -81,18 +23,6 @@ def _cfg(tmp_path, ragnar, **kw) -> Config:
         config_dir=str(tmp_path / "claude"),
         **kw,
     )
-
-
-def _run(task_id, prompt="hola", fallback=None, **extra):
-    return {
-        "type": "run",
-        "task_id": task_id,
-        "session_id": task_id,
-        "prompt": prompt,
-        "prompt_fallback": fallback or prompt,
-        "system_append": "PROTOCOLO",
-        **extra,
-    }
 
 
 @pytest.fixture

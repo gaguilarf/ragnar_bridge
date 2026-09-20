@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import List, Optional
 
 
+AGENTES = ("claude", "agy")
+AGY_PERMISOS = ("preguntar", "denegar", "auto")
+
+
 class ConfigError(Exception):
     pass
 
@@ -25,10 +29,28 @@ class Config:
     # crear el servidor, junto con el token.
     url: str
     token: str
+    # Que CLI maneja este bridge: "claude" (Claude Code) o "agy" (Antigravity).
+    # Un bridge maneja UNO; para tener los dos, dos bridges (dos tokens).
+    agent: str = "claude"
     # Comando del CLI, como lista para poder apuntar a un wrapper
     # (["node", ".../cli.js"], ["/opt/claude/bin/claude"]). Por defecto `claude`
     # del PATH.
     claude_cmd: List[str] = field(default_factory=lambda: ["claude"])
+    agy_cmd: List[str] = field(default_factory=lambda: ["agy"])
+    # Modelo de agy (`agy models` los lista). Vacio = el default del CLI.
+    agy_model: Optional[str] = None
+    # Tope de un turno de agy (--print-timeout, formato Go: 30m, 2h).
+    agy_timeout: str = "30m"
+    # Carpeta de estado de agy (conversaciones); la de siempre.
+    agy_dir: str = "~/.gemini/antigravity-cli"
+    # Que hacer cuando agy necesita permiso para una herramienta (en headless
+    # se deniega solo, y lo unico que lo destraba es aprobar TODO):
+    #   preguntar (default) -- se lo pide a Ragnar; si aprobas en la app, esa
+    #                          conversacion corre con las herramientas aprobadas.
+    #   denegar             -- nunca se concede: el agente solo lee/conversa.
+    #   auto                -- siempre aprobado (--dangerously-skip-permissions).
+    #                          Solo en un servidor desechable.
+    agy_permisos: str = "preguntar"
     # Donde arranca cada turno. Ragnar no manda ruta (una ruta de SU servidor
     # no significa nada aca): el directorio lo elegis vos.
     workdir: str = "~"
@@ -76,9 +98,17 @@ def cargar(ruta: Optional[Path] = None) -> Config:
         raise ConfigError("'url' tiene que empezar con wss:// (o ws:// solo para pruebas locales).")
 
     campos = {k: v for k, v in crudo.items() if k in Config.__dataclass_fields__}
-    if isinstance(campos.get("claude_cmd"), str):
-        campos["claude_cmd"] = [campos["claude_cmd"]]
-    return Config(**campos)
+    for clave in ("claude_cmd", "agy_cmd"):
+        if isinstance(campos.get(clave), str):
+            campos[clave] = [campos[clave]]
+    cfg = Config(**campos)
+    if cfg.agent not in AGENTES:
+        raise ConfigError(f"'agent' tiene que ser uno de {', '.join(AGENTES)} (es {cfg.agent!r}).")
+    if cfg.agy_permisos not in AGY_PERMISOS:
+        raise ConfigError(
+            f"'agy_permisos' tiene que ser uno de {', '.join(AGY_PERMISOS)} (es {cfg.agy_permisos!r})."
+        )
+    return cfg
 
 
 def guardar(cfg: Config, ruta: Optional[Path] = None) -> Path:
