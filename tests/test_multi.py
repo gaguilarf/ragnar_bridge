@@ -120,3 +120,17 @@ async def test_el_bridge_avisa_solo_si_cambia_el_estado(arrancar, ragnar, monkey
 async def test_el_frame_auth_es_json_serializable(arrancar, ragnar):
     await arrancar()
     json.dumps(ragnar.auth_frame)
+
+
+async def test_probe_de_ragnar_re_sondea_ya_y_responde_con_agents(arrancar, ragnar, monkeypatch):
+    # "Volver a comprobar" desde la app: no espera el ciclo de re-sondeo.
+    monkeypatch.setenv("FAKE_AGY_LOGIN", "0")
+    await arrancar(reprobar_cada=3600)
+    monkeypatch.setenv("FAKE_AGY_LOGIN", "1")
+
+    await ragnar.enviar({"type": "probe"})
+    while True:
+        msg = await asyncio.wait_for(ragnar.recibidos.get(), 15)
+        if msg["type"] == "agents":
+            break
+    assert _por_nombre(msg["agents"])["agy"]["login"] is True

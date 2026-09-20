@@ -70,7 +70,7 @@ class Config:
     # Cada cuantos segundos se vuelve a comprobar que CLIs estan instalados y
     # con sesion iniciada (por si te logueaste en agy despues de arrancar el
     # bridge). Si cambia algo, se le avisa a Ragnar sin reconectar.
-    reprobar_cada: int = 300
+    reprobar_cada: int = 120
     # Turnos simultaneos como maximo (conversaciones distintas a la vez).
     max_turnos: int = 4
     # Cuantos bytes del stderr del CLI se conservan para reportar un fallo.

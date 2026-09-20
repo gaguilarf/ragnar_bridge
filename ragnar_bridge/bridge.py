@@ -40,6 +40,7 @@ class Bridge:
         # Lo que el ultimo sondeo encontro: [{name, cli_version, login}].
         self.agentes: list = []
         self._ws = None
+        self._tareas_aux: set = set()
         self._envio = asyncio.Lock()
         self._procesos: Dict[str, asyncio.subprocess.Process] = {}
         self._tareas: Dict[str, asyncio.Task] = {}
@@ -107,6 +108,13 @@ class Bridge:
             await self._cortar_todo()
             self._ws = None
 
+    async def _sondear_y_avisar(self) -> None:
+        try:
+            self.agentes = await asyncio.to_thread(sondear, self.adaptadores)
+            await self.enviar({"type": "agents", "agents": self.agentes})
+        except Exception:
+            log.exception("No se pudo responder al pedido de re-sondeo.")
+
     async def _vigilar_agentes(self) -> None:
         """Vuelve a sondear cada `reprobar_cada` segundos: si instalaste agy o
         iniciaste sesion despues de arrancar el bridge, Ragnar se entera sin
@@ -155,6 +163,12 @@ class Bridge:
             tarea = asyncio.create_task(self._turno(task_id, mensaje, adaptador))
             self._tareas[task_id] = tarea
             tarea.add_done_callback(lambda _t, tid=task_id: self._tareas.pop(tid, None))
+        elif tipo == "probe":
+            # La app pide "volver a comprobar" (te acabas de loguear): se
+            # sondea YA y se responde con `agents`, sin esperar el ciclo. En una
+            # tarea aparte: sondear lanza los CLIs y puede tardar unos segundos,
+            # y este metodo corre dentro del bucle que lee el socket.
+            self._tareas_aux.add(asyncio.create_task(self._sondear_y_avisar()))
         elif tipo == "cancel":
             await self._matar(task_id)
         elif tipo == "error":

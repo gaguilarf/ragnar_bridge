@@ -182,7 +182,7 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | `url`, `token` | — | los que muestra la app |
 | `agents` | detecta los instalados | fuerza un subconjunto: `["claude"]`, `["agy"]` o los dos |
 | `agent` | — | (0.2, un solo agente) se sigue leyendo; usá `agents` |
-| `reprobar_cada` | `300` | cada cuántos segundos re-comprueba qué CLIs están instalados y con sesión |
+| `reprobar_cada` | `120` | cada cuántos segundos re-comprueba qué CLIs están instalados y con sesión |
 | `claude_cmd` / `agy_cmd` | `["claude"]` / `["agy"]` | comando del CLI (lista, por si es un wrapper) |
 | `workdir` | `~` | dónde arranca cada turno |
 | `add_dirs` | `[]` | directorios extra accesibles (`--add-dir`) |
@@ -201,7 +201,8 @@ Después de editarlo: `systemctl --user restart ragnar-bridge`.
 No hay nada que configurar: si el servidor tiene los dos con sesión iniciada, el
 chat de la app muestra un selector **Claude Code | Antigravity** al empezar una
 conversación. Si uno deja de funcionar (te deslogueaste, lo desinstalaste), el
-bridge lo avisa en unos minutos y la app deja de ofrecerlo; el otro sigue andando.
+bridge lo avisa en un par de minutos y la app lo marca «sin sesión»; el otro sigue andando.
+Después de loguearte, tocá **Volver a comprobar** en la app y se actualiza al instante.
 
 Una conversación que ya empezó sigue con su CLI (su sesión vive ahí). Si ese CLI
 no está disponible, la app te lo dice y podés empezar una conversación nueva con
