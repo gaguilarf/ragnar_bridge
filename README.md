@@ -36,7 +36,7 @@ conversación (una conversación sigue con el CLI con el que empezó).
 | Comando | `claude` | `agy` |
 | Sesión de la conversación | `--session-id` / `--resume` (la maneja el CLI) | el bridge recuerda qué conversación de agy es cuál (`agy-estado.json`) |
 | Permisos de herramientas | Ragnar te muestra la tarjeta **Autorizar**; al aprobar, el bridge suma **esa** herramienta a tu `~/.claude/settings.json` | agy **deniega** solo lo que pide permiso (en modo headless no puede preguntar). Ragnar te muestra la misma tarjeta; al aprobar, **esa conversación** corre con las herramientas aprobadas |
-| Herramientas de tickets de Ragnar (MCP) | sí (`tickets_token`) | todavía no |
+| Herramientas de tickets de Ragnar (MCP) | sí (token efímero de quien escribe) | todavía no |
 | Cuota real de la suscripción | todavía no | todavía no |
 | Probado con | Claude Code 2.1.170 | agy 1.1.27, 1.2.2 y 1.2.7 |
 
@@ -100,8 +100,12 @@ Tené en cuenta en un bridge compartido:
   mismos para todos: un permiso que uno autoriza queda autorizado para el resto.
 - Cada conversación es de quien la creó (los demás no la ven), pero comparten
   el disco del VPS.
-- Si ponés `tickets_token`, las acciones sobre tickets salen a nombre de **esa**
-  persona para todos. En un bridge compartido conviene dejarlo vacío.
+- Las herramientas de tickets usan un token que Ragnar emite **por turno** para
+  quien escribió en el chat (vence solo y ve solo las empresas de esa persona,
+  aunque sea administradora). No hace falta configurar nada. `tickets_token` en
+  la config queda solo como respaldo para un Ragnar viejo que no manda el token
+  de turno: con un Ragnar nuevo se ignora, para que nadie actúe como el dueño del
+  bridge.
 - Lo puede revocar quien lo creó o cualquier miembro del grupo (así no queda
   huérfano si su creador se va).
 - Si un miembro tiene su propio bridge **y** hay uno compartido, sus

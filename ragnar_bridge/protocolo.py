@@ -35,6 +35,13 @@ class Turno:
     system_append: str
     # Permiso que el humano ya aprobo en la app (o None).
     conceder: Optional[str]
+    # Token efimero del usuario que escribio en el chat, para el MCP de tickets
+    # de ESTE turno (o None: Ragnar no pudo emitirlo). `token_de_turno` dice si
+    # el backend manda este campo: uno nuevo lo manda siempre y, si vino vacio,
+    # el turno se queda SIN tickets; uno viejo no lo manda y se usa el
+    # `tickets_token` de la config, como antes.
+    tickets_token: Optional[str] = None
+    token_de_turno: bool = False
 
 
 def validar_run(run: dict) -> Turno:
@@ -53,7 +60,18 @@ def validar_run(run: dict) -> Turno:
     conceder = run.get("conceder")
     if conceder is not None and not isinstance(conceder, str):
         raise RunInvalido("conceder invalido")
-    return Turno(session_id, prompt, fallback, system_append, conceder or None)
+    tickets_token = run.get("tickets_token")
+    if tickets_token is not None and (not isinstance(tickets_token, str) or len(tickets_token) > 256):
+        raise RunInvalido("tickets_token invalido")
+    return Turno(
+        session_id,
+        prompt,
+        fallback,
+        system_append,
+        conceder or None,
+        tickets_token or None,
+        "tickets_token" in run,
+    )
 
 
 def permiso_es_catastrofico(tool: str) -> bool:

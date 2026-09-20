@@ -84,24 +84,38 @@ def url_mcp_tickets(ws_url: str) -> Optional[str]:
     return urlunsplit((esquema, partes.netloc, ruta, "", ""))
 
 
-def escribir_mcp_config(cfg: Config, estado_dir: Path, username: str) -> Optional[str]:
-    """MCP de tickets de Ragnar autenticado como TU usuario (con tu propio
-    ragagt_), o None si no configuraste `tickets_token`. Se regenera en cada
-    turno: barato, y evita servir un token que ya cambiaste o revocaste."""
-    if not cfg.tickets_token:
+def token_de_tickets(cfg: Config, turno: Turno) -> Optional[str]:
+    """El token con el que el agente de ESTE turno llama a Ragnar. Si Ragnar
+    manda el suyo (efimero, del usuario que escribio) es el unico que vale, aun
+    vacio: en un bridge compartido el `tickets_token` de la config es de UNA
+    persona, y usarlo de reemplazo haria actuar a todo el grupo como ella. Solo
+    un Ragnar viejo, que no manda el campo, cae al de la config."""
+    if turno.token_de_turno:
+        return turno.tickets_token
+    return cfg.tickets_token
+
+
+def escribir_mcp_config(
+    cfg: Config, estado_dir: Path, username: str, token: Optional[str], session_id: str
+) -> Optional[str]:
+    """MCP de tickets de Ragnar autenticado con `token`, o None si no hay. Se
+    regenera en cada turno: barato, y evita servir un token que ya cambiaste o
+    revocaste. Un archivo por conversacion: el bridge corre turnos de varias
+    personas a la vez y con uno solo se pisarian entre si."""
+    if not token:
         return None
     url = url_mcp_tickets(cfg.url)
     if not url:
         return None
     estado_dir.mkdir(parents=True, exist_ok=True)
-    ruta = estado_dir / "mcp-config.json"
+    ruta = estado_dir / f"mcp-config-{session_id}.json"
     contenido = {
         "mcpServers": {
             "tickets": {
                 "type": "http",
                 "url": url,
                 "headers": {
-                    "Authorization": f"Bearer {cfg.tickets_token}",
+                    "Authorization": f"Bearer {token}",
                     "X-Agent-Name": username,
                 },
             }
@@ -147,7 +161,9 @@ class ClaudeAdaptador(Adaptador):
                 turno.conceder,
             )
         limpiar_lock_sesion(cfg, turno.session_id)
-        mcp = escribir_mcp_config(cfg, self.estado_dir, username)
+        mcp = escribir_mcp_config(
+            cfg, self.estado_dir, username, token_de_tickets(cfg, turno), turno.session_id
+        )
         return construir_comando(cfg, turno, mcp)
 
 
