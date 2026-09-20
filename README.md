@@ -70,6 +70,35 @@ muestra el comando de instalación con tu URL y tu token (`ragbrg_...`).
 **El token se muestra una sola vez**: si lo perdés, revocás ese servidor y
 generás otro.
 
+### ¿Personal o para todo el grupo?
+
+En **Quién lo usa** elegís:
+
+- **Todo el grupo «X»** (recomendado si varias personas usan el mismo VPS):
+  se instala **un solo bridge** y todos los miembros del grupo chatean a través
+  de él. Un solo CLI, una sola versión, una sola cuenta: nadie se queda con su
+  `claude`/`agy` desactualizado por su cuenta. Los miembros no instalan nada;
+  al abrir Agents ya lo ven conectado.
+- **Solo yo (personal)**: nadie más lo ve ni lo puede usar.
+
+Alguien de **otro grupo** no puede usar tu bridge compartido: tiene que
+instalar el suyo.
+
+Tené en cuenta en un bridge compartido:
+
+- Todos los miembros ejecutan en el **mismo servidor y con la misma cuenta**
+  del CLI (la cuota es una sola). Los archivos y el `settings.json` son los
+  mismos para todos: un permiso que uno autoriza queda autorizado para el resto.
+- Cada conversación es de quien la creó (los demás no la ven), pero comparten
+  el disco del VPS.
+- Si ponés `tickets_token`, las acciones sobre tickets salen a nombre de **esa**
+  persona para todos. En un bridge compartido conviene dejarlo vacío.
+- Lo puede revocar quien lo creó o cualquier miembro del grupo (así no queda
+  huérfano si su creador se va).
+- Si un miembro tiene su propio bridge **y** hay uno compartido, sus
+  conversaciones nuevas usan el propio; una conversación que ya vive en uno
+  sigue en ese.
+
 ## Paso 4 — Instalá el bridge
 
 Pegá en tu VPS el comando de la app, agregando el agente que elegiste:
