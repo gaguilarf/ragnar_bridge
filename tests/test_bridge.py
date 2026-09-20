@@ -18,6 +18,7 @@ def _cfg(tmp_path, ragnar, **kw) -> Config:
     return Config(
         url=ragnar.url,
         token=TOKEN,
+        agents=["claude"],
         claude_cmd=[sys.executable, FAKE],
         workdir=str(tmp_path / "work"),
         config_dir=str(tmp_path / "claude"),
@@ -148,7 +149,7 @@ async def test_token_invalido_es_error_fatal(tmp_path):
     servidor = FakeRagnar(token_valido="otro")
     async with serve(servidor._handler, "127.0.0.1", 0) as srv:
         url = f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}"
-        cfg = Config(url=url, token=TOKEN, claude_cmd=[sys.executable, FAKE])
+        cfg = Config(url=url, token=TOKEN, agents=["claude"], claude_cmd=[sys.executable, FAKE])
         with pytest.raises(ErrorFatal):
             await asyncio.wait_for(ejecutar(cfg, tmp_path), 10)
 
@@ -157,7 +158,7 @@ async def test_protocolo_incompatible_es_error_fatal(tmp_path):
     servidor = FakeRagnar(protocolo=99)
     async with serve(servidor._handler, "127.0.0.1", 0) as srv:
         url = f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}"
-        cfg = Config(url=url, token=TOKEN, claude_cmd=[sys.executable, FAKE])
+        cfg = Config(url=url, token=TOKEN, agents=["claude"], claude_cmd=[sys.executable, FAKE])
         with pytest.raises(ErrorFatal):
             await asyncio.wait_for(ejecutar(cfg, tmp_path), 10)
 
@@ -171,7 +172,7 @@ def test_permiso_catastrofico():
 
 
 def test_conceder_no_duplica(tmp_path):
-    cfg = Config(url="ws://x", token="t", config_dir=str(tmp_path))
+    cfg = Config(url="ws://x", token="t", agents=["claude"], config_dir=str(tmp_path))
     assert conceder_permiso(cfg, "WebFetch")
     assert conceder_permiso(cfg, "WebFetch")
     datos = json.loads((tmp_path / "settings.json").read_text())

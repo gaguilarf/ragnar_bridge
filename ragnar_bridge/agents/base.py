@@ -58,6 +58,12 @@ class Adaptador:
     def encontrado(self) -> bool:
         return shutil.which(self.cmd[0]) is not None
 
+    def sesion_iniciada(self) -> Optional[bool]:
+        """¿Tiene la sesion iniciada el usuario que corre el bridge? True/False,
+        o None si no se pudo saber (el CLI no lo dice, timeout, sin red). Se usa
+        solo para AVISAR en la app: nunca impide intentar un turno."""
+        return None
+
     def preparar(self, turno: Turno, username: str) -> Comando:
         raise NotImplementedError
 

@@ -17,6 +17,15 @@ import time
 import uuid
 
 argv = sys.argv[1:]
+
+# Sondeos del bridge (no son turnos).
+if argv == ["--version"]:
+    print("fake-agy 1.0")
+    sys.exit(0)
+if argv == ["models"]:
+    print("fake-model\tFake")
+    sys.exit(0 if os.environ.get("FAKE_AGY_LOGIN", "1") == "1" else 1)
+
 prompt = next(a for a in argv if a.startswith("-p="))[3:]
 base = os.environ["AGY_FAKE_DIR"]
 

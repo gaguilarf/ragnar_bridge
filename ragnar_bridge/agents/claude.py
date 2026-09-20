@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -123,6 +124,20 @@ class ClaudeAdaptador(Adaptador):
     def cmd(self) -> List[str]:
         return self.cfg.claude_cmd
 
+    def sesion_iniciada(self) -> Optional[bool]:
+        """`claude auth status` imprime JSON con `loggedIn`; no gasta cuota."""
+        try:
+            salida = subprocess.run(
+                [*self.cmd, "auth", "status"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=_entorno(self.cfg),
+            )
+            return bool(json.loads(salida.stdout).get("loggedIn"))
+        except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+            return None
+
     def preparar(self, turno: Turno, username: str) -> Comando:
         cfg = self.cfg
         if turno.conceder and not conceder_permiso(cfg, turno.conceder):
@@ -161,6 +176,10 @@ def construir_comando(cfg: Config, turno: Turno, mcp_config: Optional[str]) -> C
         cmd += ["--add-dir", *[os.path.abspath(os.path.expanduser(d)) for d in cfg.add_dirs]]
     cmd += ["--resume" if reanudar else "--session-id", turno.session_id, texto]
 
+    return Comando(cmd, _entorno(cfg))
+
+
+def _entorno(cfg: Config) -> dict:
     env = os.environ.copy()
     # Solo se fija CLAUDE_CONFIG_DIR si la moviste de sitio: con la variable
     # puesta el CLI guarda su estado (.claude.json) DENTRO de esa carpeta, no
@@ -168,4 +187,4 @@ def construir_comando(cfg: Config, turno: Turno, mcp_config: Optional[str]) -> C
     por_defecto = os.path.abspath(os.path.expanduser("~/.claude"))
     if cfg.config_dir_abs != por_defecto:
         env["CLAUDE_CONFIG_DIR"] = cfg.config_dir_abs
-    return Comando(cmd, env)
+    return env

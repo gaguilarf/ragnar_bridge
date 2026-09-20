@@ -7,10 +7,20 @@ codigo 3 y algo en stderr.
 """
 
 import json
+import os
 import sys
 import time
 
 argv = sys.argv[1:]
+
+# Sondeos del bridge (no son turnos).
+if argv == ["--version"]:
+    print("fake-claude 1.0")
+    sys.exit(0)
+if argv == ["auth", "status"]:
+    print(json.dumps({"loggedIn": os.environ.get("FAKE_CLAUDE_LOGIN", "1") == "1"}))
+    sys.exit(0)
+
 prompt = argv[-1]
 
 print(json.dumps({"type": "system", "subtype": "init", "argv": argv}), flush=True)

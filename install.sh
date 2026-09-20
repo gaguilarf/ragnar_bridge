@@ -2,17 +2,18 @@
 # Instala ragnar-bridge como servicio de systemd de usuario (sin root).
 #
 #   curl -fsSL https://raw.githubusercontent.com/gaguilarf/ragnar_bridge/main/install.sh \
-#     | bash -s -- --agent claude --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
+#     | bash -s -- --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
 #
-# --agent claude  (default)  Claude Code: tiene que estar instalado y logueado.
-# --agent agy                Antigravity CLI: tiene que estar instalado y logueado.
+# Detecta solo los CLIs instalados en el servidor (Claude Code y/o Antigravity):
+# con al menos uno alcanza, y la app te deja elegir entre los que funcionan.
+# --agent claude|agy   opcional: maneja SOLO ese CLI.
 #
 # El bridge usa TU sesion del CLI: no te pide credenciales y Ragnar nunca las
-# ve. Cada bridge maneja UN agente; para tener los dos, corre este script dos
-# veces con --name distinto (y un token distinto cada vez).
+# ve. Volver a correr este script con otro token REEMPLAZA la config y reinicia
+# el servicio; para tener dos bridges distintos en el mismo servidor, --name.
 set -euo pipefail
 
-AGENT="claude"
+AGENT=""
 URL=""
 TOKEN=""
 WORKDIR="$HOME"
@@ -34,23 +35,33 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
-  echo "Uso: install.sh [--agent claude|agy] --url wss://.../api/v1/bridge/ws --token ragbrg_... [--workdir DIR] [--model M] [--name N]" >&2
+  echo "Uso: install.sh --url wss://.../api/v1/bridge/ws --token ragbrg_... [--agent claude|agy] [--workdir DIR] [--model M] [--name N]" >&2
   exit 2
 fi
-case "$AGENT" in claude|agy) ;; *) echo "--agent tiene que ser claude o agy." >&2; exit 2 ;; esac
+case "$AGENT" in ""|claude|agy) ;; *) echo "--agent tiene que ser claude o agy." >&2; exit 2 ;; esac
 
 command -v python3 >/dev/null || { echo "Falta python3 (>= 3.9, con el modulo venv)." >&2; exit 1; }
 
-CLI_BIN="$(command -v "$AGENT" || true)"
-if [ -z "$CLI_BIN" ]; then
-  echo "No encuentro \`$AGENT\` en el PATH." >&2
-  if [ "$AGENT" = "claude" ]; then
-    echo "  Instalalo:  curl -fsSL https://claude.ai/install.sh | bash   y logueate corriendo:  claude" >&2
-  else
-    echo "  Instalalo:  curl -fsSL https://antigravity.google/cli/install.sh | bash   y logueate corriendo:  agy" >&2
+CLI_BIN=""
+if [ -n "$AGENT" ]; then
+  CLI_BIN="$(command -v "$AGENT" || true)"
+  if [ -z "$CLI_BIN" ]; then
+    echo "No encuentro \`$AGENT\` en el PATH (abri una terminal nueva si acabas de instalarlo)." >&2
+    exit 1
   fi
-  echo "  (si acabas de instalarlo, abri una terminal nueva para que el PATH se recargue)" >&2
-  exit 1
+  echo "==> Agente: $AGENT ($CLI_BIN)"
+else
+  DETECTADOS=""
+  command -v claude >/dev/null && DETECTADOS="$DETECTADOS claude"
+  command -v agy >/dev/null && DETECTADOS="$DETECTADOS agy"
+  if [ -z "$DETECTADOS" ]; then
+    echo "No encuentro ni \`claude\` ni \`agy\` en el PATH. Instala al menos uno y logueate corriendolo una vez:" >&2
+    echo "  Claude Code:  curl -fsSL https://claude.ai/install.sh | bash" >&2
+    echo "  Antigravity:  curl -fsSL https://antigravity.google/cli/install.sh | bash" >&2
+    echo "(si acabas de instalarlo, abri una terminal nueva para que el PATH se recargue)" >&2
+    exit 1
+  fi
+  echo "==> Agentes detectados:$DETECTADOS"
 fi
 
 SUFIJO=""
@@ -63,10 +74,11 @@ VENV="$HOME/.local/share/ragnar-bridge/venv"
 echo "==> Instalando ragnar-bridge en $VENV"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet --upgrade "$SOURCE"
+"$VENV/bin/pip" install --quiet --upgrade --force-reinstall "$SOURCE"
 
-echo "==> Escribiendo la config en $CONFIG (permisos 600), agente: $AGENT"
-INIT_ARGS=(--config "$CONFIG" init --url "$URL" --token "$TOKEN" --agent "$AGENT" --cli "$CLI_BIN" --workdir "$WORKDIR")
+echo "==> Escribiendo la config en $CONFIG (permisos 600)"
+INIT_ARGS=(--config "$CONFIG" init --url "$URL" --token "$TOKEN" --workdir "$WORKDIR")
+[ -n "$AGENT" ] && INIT_ARGS+=(--agent "$AGENT" --cli "$CLI_BIN")
 [ -n "$MODEL" ] && INIT_ARGS+=(--model "$MODEL")
 "$VENV/bin/ragnar-bridge" "${INIT_ARGS[@]}"
 
@@ -88,7 +100,7 @@ UNIT_DIR="$HOME/.config/systemd/user"
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT_DIR/$SERVICIO.service" <<UNIT
 [Unit]
-Description=Ragnar bridge ($AGENT)
+Description=Ragnar bridge${NAME:+ ($NAME)}
 After=network-online.target
 Wants=network-online.target
 
@@ -106,7 +118,11 @@ WantedBy=default.target
 UNIT
 
 systemctl --user daemon-reload
-systemctl --user enable --now "$SERVICIO.service"
+systemctl --user enable "$SERVICIO.service"
+# restart y no `enable --now`: si el servicio ya corria (una instalacion
+# anterior), `--now` NO lo reinicia y el proceso viejo seguiria con la config y
+# el token de antes -- el servidor nuevo de la app nunca se conectaria.
+systemctl --user restart "$SERVICIO.service"
 
 # Sin linger el servicio de usuario muere al cerrar tu sesion SSH.
 if ! loginctl enable-linger "$USER" 2>/dev/null; then

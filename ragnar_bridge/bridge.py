@@ -12,7 +12,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from . import PROTOCOLO, __version__
-from .agents import crear_adaptador
+from .agents import crear_adaptadores, sondear
 from .config import Config, ruta_por_defecto
 from .protocolo import RunInvalido, validar_run
 
@@ -36,7 +36,9 @@ class Bridge:
     def __init__(self, cfg: Config, estado_dir: Optional[Path] = None):
         self.cfg = cfg
         self.estado_dir = estado_dir or ruta_por_defecto().parent
-        self.adaptador = crear_adaptador(cfg, self.estado_dir)
+        self.adaptadores = crear_adaptadores(cfg, self.estado_dir)
+        # Lo que el ultimo sondeo encontro: [{name, cli_version, login}].
+        self.agentes: list = []
         self._ws = None
         self._envio = asyncio.Lock()
         self._procesos: Dict[str, asyncio.subprocess.Process] = {}
@@ -54,6 +56,10 @@ class Bridge:
 
     async def sesion(self, ws) -> None:
         self._ws = ws
+        # Se lanzan los CLIs (--version, auth status): en un hilo, para no
+        # frenar el loop (que tambien atiende los turnos en curso).
+        self.agentes = await asyncio.to_thread(sondear, self.adaptadores)
+        primero = self.agentes[0] if self.agentes else {}
         await ws.send(
             json.dumps(
                 {
@@ -61,8 +67,11 @@ class Bridge:
                     "token": self.cfg.token,
                     "protocol": PROTOCOLO,
                     "version": __version__,
-                    "agent": self.adaptador.nombre,
-                    "cli_version": self.adaptador.version(),
+                    "agents": self.agentes,
+                    # Formato de la 0.2 (un solo agente): un Ragnar viejo solo
+                    # lee estos dos.
+                    "agent": primero.get("name") or "",
+                    "cli_version": primero.get("cli_version") or "",
                 }
             )
         )
@@ -75,9 +84,13 @@ class Bridge:
             raise WebSocketException(f"Respuesta inesperada de Ragnar: {bienvenida.get('type')!r}")
         self.username = str(bienvenida.get("username") or "bridge")
         log.info(
-            "Conectado a Ragnar como %s (servidor %r).", self.username, bienvenida.get("nombre")
+            "Conectado a Ragnar como %s (servidor %r). Agentes: %s.",
+            self.username,
+            bienvenida.get("nombre"),
+            ", ".join(a["name"] for a in self.agentes) or "ninguno instalado",
         )
 
+        vigia = asyncio.create_task(self._vigilar_agentes())
         try:
             async for crudo in ws:
                 try:
@@ -87,11 +100,29 @@ class Bridge:
                 if isinstance(mensaje, dict):
                     await self._atender(mensaje)
         finally:
+            vigia.cancel()
             # Sin Ragnar del otro lado nadie ve lo que el agente hace en tu
             # servidor: se cortan los turnos en curso (Ragnar los da por
             # fallidos al ver el socket caer).
             await self._cortar_todo()
             self._ws = None
+
+    async def _vigilar_agentes(self) -> None:
+        """Vuelve a sondear cada `reprobar_cada` segundos: si instalaste agy o
+        iniciaste sesion despues de arrancar el bridge, Ragnar se entera sin
+        que reinicies nada."""
+        while True:
+            await asyncio.sleep(self.cfg.reprobar_cada)
+            try:
+                nuevos = await asyncio.to_thread(sondear, self.adaptadores)
+                if nuevos != self.agentes:
+                    self.agentes = nuevos
+                    await self.enviar({"type": "agents", "agents": nuevos})
+                    log.info("Agentes actualizados: %s", nuevos)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("No se pudieron re-sondear los agentes.")
 
     async def _atender(self, mensaje: dict) -> None:
         tipo = mensaje.get("type")
@@ -103,7 +134,25 @@ class Bridge:
             if task_id in self._tareas:
                 await self.enviar({"type": "error", "task_id": task_id, "message": "Esa conversacion ya tiene un turno en curso."})
                 return
-            tarea = asyncio.create_task(self._turno(task_id, mensaje))
+            # Ragnar dice con cual agente corre esta conversacion (una sesion
+            # de claude no se retoma en agy); sin dato (un Ragnar viejo), el
+            # primero que este instalado.
+            nombre = mensaje.get("agent") or (self.agentes[0]["name"] if self.agentes else None)
+            adaptador = self.adaptadores.get(nombre) if nombre else None
+            if adaptador is None or nombre not in {a["name"] for a in self.agentes}:
+                disponibles = ", ".join(a["name"] for a in self.agentes) or "ninguno"
+                await self.enviar(
+                    {
+                        "type": "error",
+                        "task_id": task_id,
+                        "message": (
+                            f"Este servidor no tiene {nombre or 'ningun agente'} instalado "
+                            f"(disponibles: {disponibles})."
+                        ),
+                    }
+                )
+                return
+            tarea = asyncio.create_task(self._turno(task_id, mensaje, adaptador))
             self._tareas[task_id] = tarea
             tarea.add_done_callback(lambda _t, tid=task_id: self._tareas.pop(tid, None))
         elif tipo == "cancel":
@@ -113,7 +162,7 @@ class Bridge:
 
     # ---- un turno
 
-    async def _turno(self, task_id: str, run: dict) -> None:
+    async def _turno(self, task_id: str, run: dict, adaptador) -> None:
         try:
             turno = validar_run(run)
         except RunInvalido as e:
@@ -121,13 +170,13 @@ class Bridge:
             return
 
         try:
-            comando = self.adaptador.preparar(turno, self.username)
+            comando = adaptador.preparar(turno, self.username)
         except OSError as e:
             await self.enviar(
                 {"type": "error", "task_id": task_id, "message": f"No se pudo preparar el turno: {e}"}
             )
             return
-        traductor = self.adaptador.traductor(turno)
+        traductor = adaptador.traductor(turno)
 
         try:
             proceso = await asyncio.create_subprocess_exec(
@@ -148,7 +197,7 @@ class Bridge:
                 {
                     "type": "error",
                     "task_id": task_id,
-                    "message": f"No se pudo lanzar el CLI ({' '.join(self.adaptador.cmd)}) en {self.cfg.workdir_abs}: {e}",
+                    "message": f"No se pudo lanzar el CLI ({' '.join(adaptador.cmd)}) en {self.cfg.workdir_abs}: {e}",
                 }
             )
             return
@@ -271,7 +320,10 @@ async def probar_conexion(cfg: Config) -> str:
     """Abre el socket, se autentica y se desconecta, sin correr ningun turno
     (no gasta cuota). Devuelve el nombre del servidor segun Ragnar; levanta
     ErrorFatal si Ragnar rechaza la credencial, o el error de red que sea."""
-    adaptador = crear_adaptador(cfg, ruta_por_defecto().parent)
+    agentes = await asyncio.to_thread(
+        sondear, crear_adaptadores(cfg, ruta_por_defecto().parent)
+    )
+    primero = agentes[0] if agentes else {}
     async with connect(cfg.url, max_size=MAX_FRAME, open_timeout=15) as ws:
         await ws.send(
             json.dumps(
@@ -280,8 +332,9 @@ async def probar_conexion(cfg: Config) -> str:
                     "token": cfg.token,
                     "protocol": PROTOCOLO,
                     "version": __version__,
-                    "agent": adaptador.nombre,
-                    "cli_version": adaptador.version(),
+                    "agents": agentes,
+                    "agent": primero.get("name") or "",
+                    "cli_version": primero.get("cli_version") or "",
                 }
             )
         )

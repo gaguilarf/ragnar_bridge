@@ -22,6 +22,7 @@ Diferencias con Claude Code que el adaptador absorbe (verificado contra agy
 import json
 import logging
 import os
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -51,6 +52,18 @@ class AgyAdaptador(Adaptador):
     @property
     def cmd(self) -> List[str]:
         return self.cfg.agy_cmd
+
+    def sesion_iniciada(self) -> Optional[bool]:
+        """agy no tiene un comando de estado: `agy models` pide la lista a la
+        cuenta (no gasta cuota) y sale con codigo distinto de 0 si no hay
+        sesion. Un timeout o un fallo al lanzarlo no prueba nada (sin red)."""
+        try:
+            salida = subprocess.run(
+                [*self.cmd, "models"], capture_output=True, text=True, timeout=45
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return salida.returncode == 0
 
     # ---- estado propio (session_id de Ragnar -> conversacion de agy)
 

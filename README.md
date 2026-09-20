@@ -13,7 +13,9 @@ tu VPS                                          Ragnar
 └────────────────────────────┘
 ```
 
-Un bridge maneja **un** agente. Si querés los dos, instalás dos bridges (paso 7).
+Un solo bridge por servidor maneja **los dos** CLIs si los tenés: detecta cuáles
+están instalados y con sesión iniciada, y en la app elegís con cuál arranca cada
+conversación.
 
 ## Qué necesitás
 
@@ -24,7 +26,10 @@ Un bridge maneja **un** agente. Si querés los dos, instalás dos bridges (paso 
   - Claude Code con una cuenta de Claude, o
   - Antigravity CLI con una cuenta de Google.
 
-## Paso 1 — Elegí el agente
+## Paso 1 — Qué CLI vas a usar
+
+Con **uno** alcanza; con los dos podés elegir en el chat con cuál arranca cada
+conversación (una conversación sigue con el CLI con el que empezó).
 
 | | Claude Code | Antigravity (`agy`) |
 |---|---|---|
@@ -33,11 +38,15 @@ Un bridge maneja **un** agente. Si querés los dos, instalás dos bridges (paso 
 | Permisos de herramientas | Ragnar te muestra la tarjeta **Autorizar**; al aprobar, el bridge suma **esa** herramienta a tu `~/.claude/settings.json` | agy **deniega** solo lo que pide permiso (en modo headless no puede preguntar). Ragnar te muestra la misma tarjeta; al aprobar, **esa conversación** corre con las herramientas aprobadas |
 | Herramientas de tickets de Ragnar (MCP) | sí (`tickets_token`) | todavía no |
 | Cuota real de la suscripción | todavía no | todavía no |
-| Probado con | Claude Code 2.1.170 | agy 1.1.27 y 1.2.7 |
+| Probado con | Claude Code 2.1.170 | agy 1.1.27, 1.2.2 y 1.2.7 |
 
-## Paso 2 — Prepará el CLI en tu VPS
+Si no elegís ninguno en la conversación nueva, Ragnar usa el primero que
+funcione (Claude Code si está listo; si no, Antigravity).
 
-Hacé **uno** de los dos y comprobá que responde **antes** de instalar el bridge.
+## Paso 2 — Prepará el o los CLIs en tu VPS
+
+Instalá **al menos uno** (o los dos) y comprobá que responde **antes** de instalar el
+bridge. Si instalás el otro después, el bridge lo detecta solo en unos minutos.
 
 ### A) Claude Code
 
@@ -101,26 +110,28 @@ Tené en cuenta en un bridge compartido:
 
 ## Paso 4 — Instalá el bridge
 
-Pegá en tu VPS el comando de la app, agregando el agente que elegiste:
+Pegá en tu VPS el comando que te muestra la app (con tu URL y tu token):
 
 ```sh
-# Claude Code
 curl -fsSL https://raw.githubusercontent.com/gaguilarf/ragnar_bridge/main/install.sh \
-  | bash -s -- --agent claude --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
-
-# Antigravity (opcional: --model para fijar el modelo)
-curl -fsSL https://raw.githubusercontent.com/gaguilarf/ragnar_bridge/main/install.sh \
-  | bash -s -- --agent agy --model gemini-3.7-flash-high --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
+  | bash -s -- --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
 ```
 
-Opciones: `--workdir DIR` (dónde arranca cada turno, por defecto tu home),
-`--name N` (para tener dos bridges, paso 7). El script:
+No hace falta decirle el agente: detecta `claude` y/o `agy`. Opciones:
+`--agent claude|agy` (maneja SOLO ese), `--model M` (modelo de agy),
+`--workdir DIR` (dónde arranca cada turno, por defecto tu home) y `--name N`
+(un segundo bridge distinto en el mismo servidor). El script:
 
 1. crea un entorno en `~/.local/share/ragnar-bridge`;
 2. escribe `~/.config/ragnar-bridge/config.json` (permisos 600);
 3. corre `ragnar-bridge doctor` y **se detiene si algo falla**;
 4. deja un servicio de systemd de usuario y activa *linger* para que siga
    corriendo al cerrar tu sesión SSH.
+
+**Si ya tenías un bridge en ese servidor**, volver a correr el comando (con el
+mismo token o con otro) **reemplaza la config y reinicia el servicio**: es la
+forma de actualizarlo y de cambiar de token. El servidor viejo de la app queda
+"desconectado": revocalo desde **Mis servidores**.
 
 ## Paso 5 — Verificá
 
@@ -131,8 +142,10 @@ journalctl --user -u ragnar-bridge -f
 ```
 
 `doctor` no corre ningún turno (no gasta cuota); comprueba, en orden: el config,
-que el CLI exista y su versión, la carpeta de trabajo, y que Ragnar acepte tu
-token. En la app, **Mis servidores** debe mostrar el tuyo con un punto verde.
+cada CLI (instalado, versión y si tiene la sesión iniciada), la carpeta de trabajo
+y que Ragnar acepte tu token. Que a un CLI le falte la sesión es un aviso, no un
+error: te logueás y el bridge lo detecta solo. En la app, **Mis servidores** debe
+mostrar el tuyo con un punto verde y los CLIs que encontró.
 
 ## Paso 6 — Probalo
 
@@ -167,7 +180,9 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | campo | default | para qué |
 |---|---|---|
 | `url`, `token` | — | los que muestra la app |
-| `agent` | `claude` | `claude` o `agy` |
+| `agents` | detecta los instalados | fuerza un subconjunto: `["claude"]`, `["agy"]` o los dos |
+| `agent` | — | (0.2, un solo agente) se sigue leyendo; usá `agents` |
+| `reprobar_cada` | `300` | cada cuántos segundos re-comprueba qué CLIs están instalados y con sesión |
 | `claude_cmd` / `agy_cmd` | `["claude"]` / `["agy"]` | comando del CLI (lista, por si es un wrapper) |
 | `workdir` | `~` | dónde arranca cada turno |
 | `add_dirs` | `[]` | directorios extra accesibles (`--add-dir`) |
@@ -181,15 +196,20 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 
 Después de editarlo: `systemctl --user restart ragnar-bridge`.
 
-## Paso 7 — (opcional) Los dos agentes a la vez
+## Paso 7 — Cambiar entre Claude Code y Antigravity
 
-Cada bridge maneja un agente y tiene su propio token: creá **otro** servidor en
-la app y corré el instalador de nuevo con `--name`:
+No hay nada que configurar: si el servidor tiene los dos con sesión iniciada, el
+chat de la app muestra un selector **Claude Code | Antigravity** al empezar una
+conversación. Si uno deja de funcionar (te deslogueaste, lo desinstalaste), el
+bridge lo avisa en unos minutos y la app deja de ofrecerlo; el otro sigue andando.
 
-```sh
-... | bash -s -- --agent agy --name agy --url ... --token <token-del-segundo-servidor>
-# queda como servicio "ragnar-bridge-agy" y config "config-agy.json"
-```
+Una conversación que ya empezó sigue con su CLI (su sesión vive ahí). Si ese CLI
+no está disponible, la app te lo dice y podés empezar una conversación nueva con
+el otro.
+
+Solo si querés **dos bridges separados** en el mismo servidor (por ejemplo con
+dos cuentas o dos carpetas de trabajo): creá otro servidor en la app y corré el
+instalador con `--name otro` y el token del segundo.
 
 ## Qué hace y qué no hace
 
@@ -215,6 +235,8 @@ la app y corré el instalador de nuevo con `--name`:
 | `doctor`: *«Protocolo … no soportado»* | Ragnar es más nuevo que tu bridge | actualizá (más abajo) |
 | `doctor`: *«no encuentro `claude`/`agy`»* | el servicio no ve tu PATH | reinstalá desde una terminal donde el comando funcione, o poné la ruta absoluta en `claude_cmd`/`agy_cmd` |
 | El servicio se apaga al cerrar SSH | falta *linger* | como root: `loginctl enable-linger <usuario>` |
+| Instalé con otro token y la app sigue *«Esperando que tu servidor se conecte»* | con el instalador de la 0.2 el servicio ya corría y no se reiniciaba: seguía con la config vieja | volvé a correr el comando de la app (la 0.3 reinicia el servicio), o `systemctl --user restart ragnar-bridge` |
+| La app no ofrece Antigravity (o Claude) | ese CLI no está instalado, o le falta la sesión | `ragnar-bridge doctor` dice cuál; se corrige logueándose y el bridge lo detecta solo |
 | El servicio no reintenta y sale con 78 | Ragnar rechazó el token | es a propósito: generá un token nuevo |
 | (agy) el agente dice que no pudo ejecutar un comando | agy denegó la herramienta | aprobá la tarjeta en la app, o `agy_permisos` |
 | (agy) un turno largo se corta a los 30 min | `agy_timeout` | subilo en el config (`"2h"`) |

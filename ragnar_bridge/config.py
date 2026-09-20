@@ -29,9 +29,13 @@ class Config:
     # crear el servidor, junto con el token.
     url: str
     token: str
-    # Que CLI maneja este bridge: "claude" (Claude Code) o "agy" (Antigravity).
-    # Un bridge maneja UNO; para tener los dos, dos bridges (dos tokens).
-    agent: str = "claude"
+    # Que CLIs maneja este bridge. Por defecto (ninguno de los dos campos)
+    # detecta solo los que esten instalados en el servidor -- claude y/o agy --
+    # y Ragnar deja elegir entre los que funcionan. `agents` fuerza un
+    # subconjunto (["claude"]); `agent` es la forma vieja (un solo CLI), se
+    # sigue leyendo para no romper un config de la 0.2.
+    agents: Optional[List[str]] = None
+    agent: Optional[str] = None
     # Comando del CLI, como lista para poder apuntar a un wrapper
     # (["node", ".../cli.js"], ["/opt/claude/bin/claude"]). Por defecto `claude`
     # del PATH.
@@ -63,6 +67,10 @@ class Config:
     # Token propio (ragagt_...) para que el CLI use el MCP de tickets de
     # Ragnar. Opcional: sin el, el agente trabaja igual, solo sin esas tools.
     tickets_token: Optional[str] = None
+    # Cada cuantos segundos se vuelve a comprobar que CLIs estan instalados y
+    # con sesion iniciada (por si te logueaste en agy despues de arrancar el
+    # bridge). Si cambia algo, se le avisa a Ragnar sin reconectar.
+    reprobar_cada: int = 300
     # Turnos simultaneos como maximo (conversaciones distintas a la vez).
     max_turnos: int = 4
     # Cuantos bytes del stderr del CLI se conservan para reportar un fallo.
@@ -70,6 +78,15 @@ class Config:
     # Un evento de stream-json mas grande que esto (un Read de un archivo
     # enorme) se descarta en vez de romper el socket; Ragnar lo ignora.
     tope_evento: int = 8 * 1024 * 1024
+
+    def agentes_pedidos(self) -> List[str]:
+        """Los agentes que este bridge intenta manejar (aunque despues alguno no
+        este instalado): `agents`, o el `agent` viejo, o todos."""
+        if self.agents is not None:
+            return list(self.agents)
+        if self.agent:
+            return [self.agent]
+        return list(AGENTES)
 
     @property
     def workdir_abs(self) -> str:
@@ -102,8 +119,13 @@ def cargar(ruta: Optional[Path] = None) -> Config:
         if isinstance(campos.get(clave), str):
             campos[clave] = [campos[clave]]
     cfg = Config(**campos)
-    if cfg.agent not in AGENTES:
-        raise ConfigError(f"'agent' tiene que ser uno de {', '.join(AGENTES)} (es {cfg.agent!r}).")
+    for nombre in cfg.agentes_pedidos():
+        if nombre not in AGENTES:
+            raise ConfigError(
+                f"Agente desconocido {nombre!r}: 'agents' tiene que ser una lista con {' y/o '.join(AGENTES)}."
+            )
+    if isinstance(cfg.agents, list) and not cfg.agents:
+        raise ConfigError("'agents' no puede estar vacio (omitilo para detectar los instalados).")
     if cfg.agy_permisos not in AGY_PERMISOS:
         raise ConfigError(
             f"'agy_permisos' tiene que ser uno de {', '.join(AGY_PERMISOS)} (es {cfg.agy_permisos!r})."

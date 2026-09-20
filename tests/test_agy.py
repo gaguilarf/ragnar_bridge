@@ -19,7 +19,7 @@ def _cfg(tmp_path, ragnar, **kw) -> Config:
     return Config(
         url=ragnar.url,
         token=TOKEN,
-        agent="agy",
+        agents=["agy"],
         agy_cmd=[sys.executable, FAKE_AGY],
         agy_dir=str(tmp_path / "agy"),
         workdir=str(tmp_path / "work"),
@@ -68,6 +68,7 @@ def _texto(eventos) -> str:
 async def test_el_bridge_se_anuncia_como_agy(arrancar, ragnar):
     await arrancar()
     assert ragnar.auth_frame["agent"] == "agy"
+    assert [a["name"] for a in ragnar.auth_frame["agents"]] == ["agy"]
 
 
 async def test_traduce_los_eventos_de_agy_al_formato_de_claude(arrancar, ragnar):
@@ -253,23 +254,31 @@ async def test_cancel_corta_el_proceso(arrancar, ragnar):
 def test_config_rechaza_agente_y_permisos_invalidos(tmp_path):
     ruta = tmp_path / "config.json"
     base = {"url": "wss://x/api/v1/bridge/ws", "token": "t"}
-    ruta.write_text(json.dumps({**base, "agent": "gemini"}))
-    with pytest.raises(ConfigError, match="agent"):
+    ruta.write_text(json.dumps({**base, "agents": ["gemini"]}))
+    with pytest.raises(ConfigError, match="gemini"):
         cargar(ruta)
-    ruta.write_text(json.dumps({**base, "agent": "agy", "agy_permisos": "siempre"}))
+    ruta.write_text(json.dumps({**base, "agents": []}))
+    with pytest.raises(ConfigError, match="vacio"):
+        cargar(ruta)
+    ruta.write_text(json.dumps({**base, "agents": ["agy"], "agy_permisos": "siempre"}))
     with pytest.raises(ConfigError, match="agy_permisos"):
         cargar(ruta)
-    ruta.write_text(json.dumps({**base, "agent": "agy", "agy_cmd": "agy"}))
+    ruta.write_text(json.dumps({**base, "agents": ["agy"], "agy_cmd": "agy"}))
     assert cargar(ruta).agy_cmd == ["agy"]
+    # Config de la 0.2 (un solo agente) y sin ninguno (detecta todos).
+    ruta.write_text(json.dumps({**base, "agent": "agy"}))
+    assert cargar(ruta).agentes_pedidos() == ["agy"]
+    ruta.write_text(json.dumps(base))
+    assert cargar(ruta).agentes_pedidos() == ["claude", "agy"]
 
 
 async def test_probar_conexion_devuelve_el_nombre_del_servidor(ragnar, tmp_path):
-    cfg = Config(url=ragnar.url, token=TOKEN, agent="agy", agy_cmd=[sys.executable, FAKE_AGY])
+    cfg = Config(url=ragnar.url, token=TOKEN, agents=["agy"], agy_cmd=[sys.executable, FAKE_AGY])
     assert await probar_conexion(cfg) == "t"
     assert ragnar.auth_frame["protocol"] == PROTOCOLO
 
 
 async def test_probar_conexion_con_token_invalido_es_error_fatal(ragnar):
-    cfg = Config(url=ragnar.url, token="ragbrg_otro", agent="agy", agy_cmd=[sys.executable, FAKE_AGY])
+    cfg = Config(url=ragnar.url, token="ragbrg_otro", agents=["agy"], agy_cmd=[sys.executable, FAKE_AGY])
     with pytest.raises(ErrorFatal):
         await probar_conexion(cfg)

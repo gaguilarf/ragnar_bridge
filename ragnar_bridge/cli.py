@@ -7,29 +7,52 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .agents import crear_adaptador
+from .agents import crear_adaptadores
 from .bridge import SALIDA_AUTH, ErrorFatal, ejecutar, probar_conexion
 from .config import AGENTES, Config, ConfigError, cargar, guardar, ruta_por_defecto
 
+_INSTALAR = {
+    "claude": "curl -fsSL https://claude.ai/install.sh | bash",
+    "agy": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+}
+
 
 def _init(args) -> int:
-    binario = args.cli or shutil.which(args.agent)
-    if not binario:
-        print(
-            f"No encuentro `{args.agent}` en el PATH. Instalalo y logueate una vez "
-            f"(corre `{args.agent}`), o pasame la ruta con --cli.",
-            file=sys.stderr,
-        )
-        return 2
-    cfg = Config(url=args.url, token=args.token, agent=args.agent, workdir=args.workdir)
-    if args.agent == "claude":
-        cfg.claude_cmd = [binario]
+    cfg = Config(url=args.url, token=args.token, workdir=args.workdir)
+    if args.model:
+        cfg.agy_model = args.model
+
+    # Se guarda la ruta ABSOLUTA de cada CLI encontrado: el servicio de systemd
+    # no siempre ve el mismo PATH que tu terminal.
+    if args.agent:
+        binario = args.cli or shutil.which(args.agent)
+        if not binario:
+            print(
+                f"No encuentro `{args.agent}` en el PATH. Instalalo ({_INSTALAR[args.agent]}) y "
+                f"logueate una vez (corre `{args.agent}`), o pasame la ruta con --cli.",
+                file=sys.stderr,
+            )
+            return 2
+        cfg.agents = [args.agent]
+        setattr(cfg, f"{args.agent}_cmd", [binario])
+        encontrados = [args.agent]
     else:
-        cfg.agy_cmd = [binario]
-        if args.model:
-            cfg.agy_model = args.model
+        encontrados = []
+        for nombre in AGENTES:
+            binario = shutil.which(nombre)
+            if binario:
+                setattr(cfg, f"{nombre}_cmd", [binario])
+                encontrados.append(nombre)
+        if not encontrados:
+            print(
+                "No encuentro ni `claude` ni `agy` en el PATH. Instalá al menos uno y logueate "
+                "una vez:\n  Claude Code:  " + _INSTALAR["claude"] + "\n  Antigravity:  " + _INSTALAR["agy"],
+                file=sys.stderr,
+            )
+            return 2
+
     ruta = guardar(cfg, Path(args.config) if args.config else None)
-    print(f"Config escrita en {ruta} (permisos 600), agente: {args.agent}.")
+    print(f"Config escrita en {ruta} (permisos 600). Agentes detectados: {', '.join(encontrados)}.")
     return 0
 
 
@@ -49,13 +72,22 @@ def _doctor(args) -> int:
     except ConfigError as e:
         paso(False, str(e))
         return 1
-    paso(True, f"config {ruta} (agente: {cfg.agent})")
+    paso(True, f"config {ruta}")
 
-    adaptador = crear_adaptador(cfg, ruta.parent)
-    if adaptador.encontrado():
-        paso(True, f"CLI {' '.join(adaptador.cmd)} -> version {adaptador.version()}")
-    else:
-        paso(False, f"no encuentro `{adaptador.cmd[0]}`: instalalo, o fija la ruta en el config")
+    # Con al menos UN agente instalado el bridge sirve: la app deja elegir entre
+    # los que funcionan. Falta de sesion es un aviso, no un error: se corrige
+    # logueandose y el bridge lo detecta solo (re-sondea cada pocos minutos).
+    adaptadores = crear_adaptadores(cfg, ruta.parent)
+    usables = 0
+    for nombre, adaptador in adaptadores.items():
+        if not adaptador.encontrado():
+            print(f"  [--] {nombre}: no esta instalado ({_INSTALAR[nombre]})")
+            continue
+        sesion = adaptador.sesion_iniciada()
+        estado = {True: "sesion iniciada", False: "SIN sesion: corre `%s` y logueate" % nombre, None: "sesion sin comprobar"}[sesion]
+        print(f"  [{'ok' if sesion is not False else '!!'}] {nombre}: {adaptador.version()} -- {estado}")
+        usables += 1
+    paso(usables > 0, "hay al menos un agente instalado" if usables else "no hay ningun agente instalado (claude o agy)")
     paso(os.path.isdir(cfg.workdir_abs), f"carpeta de trabajo {cfg.workdir_abs}")
 
     try:
@@ -96,13 +128,17 @@ def main() -> None:
     p_init = sub.add_parser("init", help="crea el archivo de configuracion")
     p_init.add_argument("--url", required=True, help="wss://.../api/v1/bridge/ws (la muestra la app)")
     p_init.add_argument("--token", required=True, help="ragbrg_... (la app lo muestra una sola vez)")
-    p_init.add_argument("--agent", choices=AGENTES, default="claude", help="que CLI maneja este bridge")
-    p_init.add_argument("--cli", help="ruta del CLI si no esta en el PATH")
+    p_init.add_argument(
+        "--agent",
+        choices=AGENTES,
+        help="manejar SOLO este CLI (por defecto detecta claude y agy, los que esten instalados)",
+    )
+    p_init.add_argument("--cli", help="ruta del CLI si no esta en el PATH (con --agent)")
     p_init.add_argument("--model", help="(agy) modelo, ver `agy models`")
     p_init.add_argument("--workdir", default="~", help="donde arranca cada turno (default ~)")
     p_init.set_defaults(fn=_init)
 
-    p_doc = sub.add_parser("doctor", help="verifica config, CLI y conexion con Ragnar (sin gastar cuota)")
+    p_doc = sub.add_parser("doctor", help="verifica config, CLIs y conexion con Ragnar (sin gastar cuota)")
     p_doc.set_defaults(fn=_doctor)
 
     p_run = sub.add_parser("run", help="conecta con Ragnar (es lo que corre el servicio)")
