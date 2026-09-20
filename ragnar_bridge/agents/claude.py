@@ -13,10 +13,10 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlsplit, urlunsplit
 
 from ..config import Config
 from ..protocolo import Turno, permiso_es_catastrofico
+from ..tickets import token_de_tickets, url_mcp_tickets  # noqa: F401  (se re-exportan)
 from .base import Adaptador, Comando
 
 # El CLI real sanea CUALQUIER caracter no alfanumerico del cwd a "-" para
@@ -71,28 +71,6 @@ def conceder_permiso(cfg: Config, tool: str) -> bool:
     except OSError:
         return False
     return True
-
-
-def url_mcp_tickets(ws_url: str) -> Optional[str]:
-    """https://<panel>/api/v1/mcp a partir de wss://<panel>/api/v1/bridge/ws."""
-    partes = urlsplit(ws_url)
-    sufijo = "/bridge/ws"
-    if not partes.path.endswith(sufijo):
-        return None
-    esquema = "https" if partes.scheme == "wss" else "http"
-    ruta = partes.path[: -len(sufijo)] + "/mcp"
-    return urlunsplit((esquema, partes.netloc, ruta, "", ""))
-
-
-def token_de_tickets(cfg: Config, turno: Turno) -> Optional[str]:
-    """El token con el que el agente de ESTE turno llama a Ragnar. Si Ragnar
-    manda el suyo (efimero, del usuario que escribio) es el unico que vale, aun
-    vacio: en un bridge compartido el `tickets_token` de la config es de UNA
-    persona, y usarlo de reemplazo haria actuar a todo el grupo como ella. Solo
-    un Ragnar viejo, que no manda el campo, cae al de la config."""
-    if turno.token_de_turno:
-        return turno.tickets_token
-    return cfg.tickets_token
 
 
 def escribir_mcp_config(

@@ -10,6 +10,11 @@ Diferencias con Claude Code que el adaptador absorbe (verificado contra agy
   `agy-estado.json` y los turnos siguientes usan `--conversation`.
 * No hay `--append-system-prompt`: las instrucciones de Ragnar se anteponen al
   prompt del primer turno de cada conversacion (despues viven en el hilo).
+* Tickets de Ragnar (MCP): agy tiene UN archivo global de servidores MCP y sus
+  cabeceras no expanden variables de entorno, asi que un token por turno no
+  cabe ahi. Se registra una sola vez `ragnar-tickets` como servidor stdio
+  (`mcp_proxy`) y el token de cada turno viaja en el ENTORNO del agy de ese
+  turno, que el servidor hereda. Ver `mcp_proxy.py`.
 * En modo headless una herramienta que pide permiso se DENIEGA sola (y
   `permissions.allow` de su settings.json se ignora en headless, issue #548 de
   antigravity-cli). La salida es `--dangerously-skip-permissions`, que aprueba
@@ -23,11 +28,13 @@ import json
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import Config
 from ..protocolo import Turno
+from ..tickets import token_de_tickets, url_mcp_tickets
 from .base import Adaptador, Comando, Traductor
 
 log = logging.getLogger("ragnar_bridge")
@@ -38,6 +45,11 @@ log = logging.getLogger("ragnar_bridge")
 PERMISO_AGY = "agy:permisos"
 
 _SEPARADOR = "\n\n---\n\n"
+
+# Nombre con el que se registra el puente en el archivo global de MCP de agy: uno
+# propio, para no pisar un servidor "tickets" que ya tengas por tu cuenta.
+NOMBRE_MCP = "ragnar-tickets"
+_INTENTOS_REGISTRO = 3
 
 
 def conversacion_existe(cfg: Config, conversation_id: str) -> bool:
@@ -64,6 +76,46 @@ class AgyAdaptador(Adaptador):
         except (OSError, subprocess.SubprocessError):
             return None
         return salida.returncode == 0
+
+    # ---- MCP de tickets
+
+    def asegurar_mcp(self) -> bool:
+        """Registra `ragnar-tickets` en agy (una vez por proceso del bridge;
+        `mcp add` reemplaza si ya existe, asi que tambien sirve tras mover el
+        bridge de venv). Si agy no lo acepta el turno sigue, sin tickets."""
+        if getattr(self, "_mcp_listo", False):
+            return True
+        intentos = getattr(self, "_mcp_intentos", 0)
+        if intentos >= _INTENTOS_REGISTRO:
+            return False
+        self._mcp_intentos = intentos + 1
+        try:
+            r = subprocess.run(
+                [*self.cmd, "mcp", "add", NOMBRE_MCP, sys.executable, "--", "-m", "ragnar_bridge.mcp_proxy"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("No se pudo registrar el MCP de tickets en agy: %s", e)
+            return False
+        if r.returncode != 0:
+            log.warning("agy no acepto el MCP de tickets: %s", (r.stderr or r.stdout).strip()[:200])
+            return False
+        self._mcp_listo = True
+        return True
+
+    def entorno(self, turno: Turno) -> Dict[str, str]:
+        env = os.environ.copy()
+        for k in ("RAGNAR_TICKETS_URL", "RAGNAR_TICKETS_TOKEN", "RAGNAR_TICKETS_AGENT"):
+            env.pop(k, None)
+        token = token_de_tickets(self.cfg, turno)
+        url = url_mcp_tickets(self.cfg.url)
+        if token and url and self.asegurar_mcp():
+            env["RAGNAR_TICKETS_URL"] = url
+            env["RAGNAR_TICKETS_TOKEN"] = token
+            env["RAGNAR_TICKETS_AGENT"] = "agy"
+        return env
 
     # ---- estado propio (session_id de Ragnar -> conversacion de agy)
 
@@ -140,7 +192,7 @@ class AgyAdaptador(Adaptador):
             argv += ["--conversation", conversacion]
         if auto:
             argv.append("--dangerously-skip-permissions")
-        return Comando(argv, os.environ.copy())
+        return Comando(argv, self.entorno(turno))
 
     def traductor(self, turno: Turno) -> "TraductorAgy":
         return TraductorAgy(self, turno)

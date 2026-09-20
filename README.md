@@ -36,7 +36,7 @@ conversación (una conversación sigue con el CLI con el que empezó).
 | Comando | `claude` | `agy` |
 | Sesión de la conversación | `--session-id` / `--resume` (la maneja el CLI) | el bridge recuerda qué conversación de agy es cuál (`agy-estado.json`) |
 | Permisos de herramientas | Ragnar te muestra la tarjeta **Autorizar**; al aprobar, el bridge suma **esa** herramienta a tu `~/.claude/settings.json` | agy **deniega** solo lo que pide permiso (en modo headless no puede preguntar). Ragnar te muestra la misma tarjeta; al aprobar, **esa conversación** corre con las herramientas aprobadas |
-| Herramientas de tickets de Ragnar (MCP) | sí (token efímero de quien escribe) | todavía no |
+| Herramientas de tickets de Ragnar (MCP) | sí (token efímero de quien escribe) | sí, por un puente propio (`ragnar-tickets`, se registra solo) |
 | Cuota real de la suscripción | todavía no | todavía no |
 | Probado con | Claude Code 2.1.170 | agy 1.1.27, 1.2.2 y 1.2.7 |
 
@@ -106,6 +106,12 @@ Tené en cuenta en un bridge compartido:
   la config queda solo como respaldo para un Ragnar viejo que no manda el token
   de turno: con un Ragnar nuevo se ignora, para que nadie actúe como el dueño del
   bridge.
+- En `agy` el MCP de tickets pasa por un puente stdio→HTTP (`ragnar_bridge.mcp_proxy`)
+  que el bridge registra solo en `~/.gemini/config/mcp_config.json` con el nombre
+  `ragnar-tickets`: ese archivo es global y `agy` no expande variables en las
+  cabeceras, así que el token de cada turno viaja en el entorno del proceso de
+  `agy` (nunca en disco). Como en cualquier herramienta de `agy` en modo
+  headless, la primera vez te pide **Autorizar** en la app.
 - Lo puede revocar quien lo creó o cualquier miembro del grupo (así no queda
   huérfano si su creador se va).
 - Si un miembro tiene su propio bridge **y** hay uno compartido, sus
