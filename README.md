@@ -138,6 +138,41 @@ No hace falta decirle el agente: detecta `claude` y/o `agy`. Opciones:
 4. deja un servicio de systemd de usuario y activa *linger* para que siga
    corriendo al cerrar tu sesión SSH.
 
+## Instalar agentes y skills de proyecto desde Ragnar
+
+La sección **Servicios → Bootstrap de agentes** permite previsualizar e
+instalar archivos publicados por un administrador en el proyecto elegido. La
+escritura ocurre en este VPS; Ragnar no recibe ni almacena secretos del CLI.
+El bootstrap admite `.claude/agents/` y `.claude/skills/` para Claude Code, y
+`.agent/rules/` y `.agent/workflows/` para Antigravity. Archivos existentes se
+marcan como conflictos: hay que confirmar la sobrescritura y el bridge guarda
+una copia en `.ragnar-bootstrap-backups/`.
+
+Para habilitarlo, añade `project_paths` al archivo
+`~/.config/ragnar-bridge/config.json`. Las claves son las keys de proyecto de
+Ragnar y los valores son rutas locales absolutas al repositorio:
+
+```json
+{
+  "project_paths": {
+    "RAG": "/home/usuario/proyectos/ragnar_group_back",
+    "CRM": "/home/usuario/proyectos/crm"
+  }
+}
+```
+
+El bridge no adivina rutas ni crea mapeos automáticamente. Rechaza rutas fuera
+de las carpetas permitidas, enlaces simbólicos, rutas duplicadas y contenidos
+cuyo SHA-256 no coincida con el catálogo publicado.
+
+Esta función requiere `ragnar-bridge` **0.4.0 o posterior**. Para actualizar
+una instalación existente sin reemplazar su config:
+
+```sh
+~/.local/share/ragnar-bridge/venv/bin/pip install --upgrade --force-reinstall 'git+https://github.com/gaguilarf/ragnar_bridge'
+systemctl --user restart ragnar-bridge.service
+```
+
 **Si ya tenías un bridge en ese servidor**, volver a correr el comando (con el
 mismo token o con otro) **reemplaza la config y reinicia el servicio**: es la
 forma de actualizarlo y de cambiar de token. El servidor viejo de la app queda

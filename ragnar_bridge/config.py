@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 AGENTES = ("claude", "agy")
@@ -58,6 +58,9 @@ class Config:
     # Donde arranca cada turno. Ragnar no manda ruta (una ruta de SU servidor
     # no significa nada aca): el directorio lo elegis vos.
     workdir: str = "~"
+    # Rutas locales de proyectos para instalación de agentes/skills. Se
+    # configuran en el servidor del usuario; Ragnar solo transmite project_key.
+    project_paths: Dict[str, str] = field(default_factory=dict)
     # Directorios extra a los que el CLI puede llegar fuera de `workdir` (flag
     # --add-dir). Vacio = solo workdir.
     add_dirs: List[str] = field(default_factory=list)
@@ -119,6 +122,15 @@ def cargar(ruta: Optional[Path] = None) -> Config:
         if isinstance(campos.get(clave), str):
             campos[clave] = [campos[clave]]
     cfg = Config(**campos)
+    if not isinstance(cfg.project_paths, dict) or any(
+        not isinstance(k, str)
+        or not k
+        or len(k) > 6
+        or not isinstance(v, str)
+        or not v
+        for k, v in cfg.project_paths.items()
+    ):
+        raise ConfigError("'project_paths' debe mapear claves de proyecto a directorios.")
     for nombre in cfg.agentes_pedidos():
         if nombre not in AGENTES:
             raise ConfigError(

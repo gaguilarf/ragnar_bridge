@@ -2,10 +2,15 @@
 services/bridge_hub.py en ragnar_group_back (es la fuente de verdad)."""
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import random
-from pathlib import Path
+import shutil
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 from typing import Dict, Optional
 
 from websockets.asyncio.client import connect
@@ -169,10 +174,128 @@ class Bridge:
             # tarea aparte: sondear lanza los CLIs y puede tardar unos segundos,
             # y este metodo corre dentro del bucle que lee el socket.
             self._tareas_aux.add(asyncio.create_task(self._sondear_y_avisar()))
+        elif tipo == "bootstrap":
+            tarea = asyncio.create_task(self._bootstrap(mensaje))
+            self._tareas_aux.add(tarea)
+            tarea.add_done_callback(self._tareas_aux.discard)
         elif tipo == "cancel":
             await self._matar(task_id)
         elif tipo == "error":
             log.warning("Ragnar: %s", mensaje.get("message"))
+
+    async def _bootstrap(self, mensaje: dict) -> None:
+        request_id = str(mensaje.get("request_id") or "")
+        try:
+            resultado = await asyncio.to_thread(self._aplicar_bootstrap, mensaje)
+        except Exception as error:
+            resultado = {"ok": False, "error": str(error)[:300], "files": []}
+        try:
+            await self.enviar({
+                "type": "bootstrap_result",
+                "request_id": request_id,
+                "result": resultado,
+            })
+        except Exception:
+            log.exception("No se pudo enviar el resultado del bootstrap.")
+
+    def _aplicar_bootstrap(self, mensaje: dict) -> dict:
+        cli = mensaje.get("cli")
+        project_key = mensaje.get("project_key")
+        mode = mensaje.get("mode")
+        overwrite = mensaje.get("overwrite") is True
+        if cli not in ("claude", "agy") or mode not in ("preview", "apply"):
+            raise ValueError("CLI o modo de bootstrap inválido.")
+        if not isinstance(project_key, str) or project_key not in self.cfg.project_paths:
+            raise ValueError("Este proyecto no tiene una ruta configurada en el bridge.")
+        archivos = mensaje.get("files")
+        if not isinstance(archivos, list) or not archivos or len(archivos) > 200:
+            raise ValueError("El manifiesto debe tener entre 1 y 200 archivos.")
+        if sum(len(str(a.get("content", "")).encode("utf-8")) for a in archivos if isinstance(a, dict)) > 4 * 1024 * 1024:
+            raise ValueError("El manifiesto supera el límite de 4 MiB.")
+
+        raiz = Path(self.cfg.project_paths[project_key]).expanduser().resolve(strict=True)
+        if not raiz.is_dir():
+            raise ValueError("La ruta configurada para el proyecto no es un directorio.")
+        prefijos = {
+            "claude": (".claude/agents/", ".claude/skills/"),
+            "agy": (".agent/rules/", ".agent/workflows/"),
+        }[cli]
+        preparados = []
+        vistos = set()
+        for archivo in archivos:
+            if not isinstance(archivo, dict):
+                raise ValueError("El manifiesto contiene un elemento inválido.")
+            ruta = archivo.get("path")
+            contenido = archivo.get("content")
+            sha = archivo.get("sha256")
+            if not isinstance(ruta, str) or not ruta.startswith(prefijos):
+                raise ValueError("La ruta no está permitida para ese CLI.")
+            if "\\" in ruta or "\x00" in ruta or PurePosixPath(ruta).is_absolute() or any(
+                parte in ("", ".", "..") for parte in ruta.split("/")
+            ):
+                raise ValueError("La ruta debe ser relativa y no puede salir del proyecto.")
+            if ruta in vistos:
+                raise ValueError("El manifiesto contiene rutas duplicadas.")
+            vistos.add(ruta)
+            if not isinstance(contenido, str) or len(contenido.encode("utf-8")) > 262144:
+                raise ValueError("El contenido de un archivo es inválido o supera 256 KiB.")
+            calculado = hashlib.sha256(contenido.encode("utf-8")).hexdigest()
+            if not isinstance(sha, str) or sha != calculado:
+                raise ValueError(f"La huella de {ruta} no coincide.")
+            destino = raiz.joinpath(*PurePosixPath(ruta).parts)
+            if not destino.resolve(strict=False).is_relative_to(raiz):
+                raise ValueError("Una ruta apunta fuera del proyecto.")
+            actual = raiz
+            for parte in PurePosixPath(ruta).parts:
+                actual = actual / parte
+                if actual.is_symlink():
+                    raise ValueError("No se permiten enlaces simbólicos en rutas de destino.")
+            if destino.exists() and not destino.is_file():
+                raise ValueError("La ruta de destino existe y no es un archivo regular.")
+            preparados.append((ruta, destino, contenido))
+
+        resultados = [
+            {"path": ruta, "status": "conflict" if destino.exists() else "create"}
+            for ruta, destino, _ in preparados
+        ]
+        conflictos = [r for r in resultados if r["status"] == "conflict"]
+        if mode == "preview":
+            return {"ok": True, "mode": mode, "files": resultados}
+        if conflictos and not overwrite:
+            return {
+                "ok": False,
+                "error": "Hay archivos existentes. Revisá la vista previa y confirmá sobrescritura.",
+                "files": resultados,
+            }
+
+        carpeta_respaldo = raiz / ".ragnar-bootstrap-backups"
+        if carpeta_respaldo.is_symlink():
+            raise ValueError("La carpeta de respaldos no puede ser un enlace simbólico.")
+        respaldo = carpeta_respaldo / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        estados = {ruta: destino.exists() for ruta, destino, _ in preparados}
+        for ruta, destino, contenido in preparados:
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            if destino.exists():
+                respaldo_destino = respaldo.joinpath(*PurePosixPath(ruta).parts)
+                respaldo_destino.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destino, respaldo_destino)
+            fd, temporal = tempfile.mkstemp(prefix=".ragnar-bootstrap-", dir=destino.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as archivo:
+                    archivo.write(contenido)
+                os.chmod(temporal, 0o600)
+                os.replace(temporal, destino)
+            finally:
+                if os.path.exists(temporal):
+                    os.unlink(temporal)
+        return {
+            "ok": True,
+            "mode": mode,
+            "files": [
+                {"path": ruta, "status": "updated" if estados[ruta] else "written"}
+                for ruta, destino, _ in preparados
+            ],
+        }
 
     # ---- un turno
 
