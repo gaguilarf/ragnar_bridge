@@ -20,6 +20,8 @@ def _cfg(tmp_path, ragnar, **kw) -> Config:
         token=TOKEN,
         claude_cmd=[sys.executable, FAKE],
         agy_cmd=[sys.executable, FAKE_AGY],
+        # Un Codex que si estuviera instalado en la maquina de pruebas no debe colarse.
+        codex_cmd=["/no/existe/codex"],
         agy_dir=str(tmp_path / "agy"),
         config_dir=str(tmp_path / "claude"),
         workdir=str(tmp_path / "work"),

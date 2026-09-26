@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-AGENTES = ("claude", "agy")
+AGENTES = ("claude", "agy", "codex")
 AGY_PERMISOS = ("preguntar", "denegar", "auto")
+CODEX_SANDBOXES = ("read-only", "workspace-write", "danger-full-access")
 
 
 class ConfigError(Exception):
@@ -30,7 +31,7 @@ class Config:
     url: str
     token: str
     # Que CLIs maneja este bridge. Por defecto (ninguno de los dos campos)
-    # detecta solo los que esten instalados en el servidor -- claude y/o agy --
+    # detecta solo los que esten instalados en el servidor -- claude, agy y/o codex --
     # y Ragnar deja elegir entre los que funcionan. `agents` fuerza un
     # subconjunto (["claude"]); `agent` es la forma vieja (un solo CLI), se
     # sigue leyendo para no romper un config de la 0.2.
@@ -41,6 +42,7 @@ class Config:
     # del PATH.
     claude_cmd: List[str] = field(default_factory=lambda: ["claude"])
     agy_cmd: List[str] = field(default_factory=lambda: ["agy"])
+    codex_cmd: List[str] = field(default_factory=lambda: ["codex"])
     # Modelo de agy (`agy models` los lista). Vacio = el default del CLI.
     agy_model: Optional[str] = None
     # Tope de un turno de agy (--print-timeout, formato Go: 30m, 2h).
@@ -55,6 +57,15 @@ class Config:
     #   auto                -- siempre aprobado (--dangerously-skip-permissions).
     #                          Solo en un servidor desechable.
     agy_permisos: str = "preguntar"
+    # Codex: modelo (vacio = el default de tu config.toml), carpeta de Codex (con
+    # tu sesion ya iniciada; el bridge nunca escribe en su config.toml) y sandbox
+    # de las herramientas. En `exec` nadie aprueba comandos, asi que lo que el
+    # sandbox no permite falla: `read-only` (default) solo lee y conversa,
+    # `workspace-write` edita dentro de workdir (y de `add_dirs`),
+    # `danger-full-access` no restringe nada -- solo en un servidor desechable.
+    codex_model: Optional[str] = None
+    codex_home: str = "~/.codex"
+    codex_sandbox: str = "read-only"
     # Donde arranca cada turno. Ragnar no manda ruta (una ruta de SU servidor
     # no significa nada aca): el directorio lo elegis vos.
     workdir: str = "~"
@@ -96,6 +107,10 @@ class Config:
         return os.path.abspath(os.path.expanduser(self.workdir))
 
     @property
+    def codex_home_abs(self) -> str:
+        return os.path.abspath(os.path.expanduser(self.codex_home))
+
+    @property
     def config_dir_abs(self) -> str:
         return os.path.abspath(os.path.expanduser(self.config_dir))
 
@@ -118,7 +133,7 @@ def cargar(ruta: Optional[Path] = None) -> Config:
         raise ConfigError("'url' tiene que empezar con wss:// (o ws:// solo para pruebas locales).")
 
     campos = {k: v for k, v in crudo.items() if k in Config.__dataclass_fields__}
-    for clave in ("claude_cmd", "agy_cmd"):
+    for clave in ("claude_cmd", "agy_cmd", "codex_cmd"):
         if isinstance(campos.get(clave), str):
             campos[clave] = [campos[clave]]
     cfg = Config(**campos)
@@ -141,6 +156,10 @@ def cargar(ruta: Optional[Path] = None) -> Config:
     if cfg.agy_permisos not in AGY_PERMISOS:
         raise ConfigError(
             f"'agy_permisos' tiene que ser uno de {', '.join(AGY_PERMISOS)} (es {cfg.agy_permisos!r})."
+        )
+    if cfg.codex_sandbox not in CODEX_SANDBOXES:
+        raise ConfigError(
+            f"'codex_sandbox' tiene que ser uno de {', '.join(CODEX_SANDBOXES)} (es {cfg.codex_sandbox!r})."
         )
     return cfg
 

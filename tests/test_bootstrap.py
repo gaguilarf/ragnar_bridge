@@ -65,3 +65,18 @@ def test_rejects_modified_content_hash(tmp_path):
     bridge = _bridge(root)
     with pytest.raises(ValueError, match="huella"):
         bridge._aplicar_bootstrap({"cli": "claude", "project_key": "RAG", "mode": "preview", "files": [{"path": ".claude/agents/a.md", "content": "x", "sha256": "bad"}]})
+
+
+def test_codex_escribe_solo_en_sus_carpetas(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    bridge = _bridge(root)
+    archivos = [_manifest(".codex/agents/reviewer.toml", "x"), _manifest(".agents/skills/revisar/SKILL.md", "y")]
+    result = bridge._aplicar_bootstrap({"cli": "codex", "project_key": "RAG", "mode": "apply", "files": archivos})
+    assert [f["status"] for f in result["files"]] == ["written", "written"]
+    assert (root / ".agents/skills/revisar/SKILL.md").read_text() == "y"
+
+    # Las carpetas de otro CLI, o el config.toml de Codex, no.
+    for path in (".claude/agents/a.md", ".agent/rules/a.md", ".codex/config.toml", ".codex/agents/../config.toml"):
+        with pytest.raises(ValueError):
+            bridge._aplicar_bootstrap({"cli": "codex", "project_key": "RAG", "mode": "preview", "files": [_manifest(path, "x")]})

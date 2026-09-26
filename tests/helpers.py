@@ -8,6 +8,7 @@ from ragnar_bridge import PROTOCOLO
 
 FAKE = str(Path(__file__).parent / "fake_claude.py")
 FAKE_AGY = str(Path(__file__).parent / "fake_agy.py")
+FAKE_CODEX = str(Path(__file__).parent / "fake_codex.py")
 TOKEN = "ragbrg_test"
 
 

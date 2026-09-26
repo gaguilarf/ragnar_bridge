@@ -14,13 +14,19 @@ from .config import AGENTES, Config, ConfigError, cargar, guardar, ruta_por_defe
 _INSTALAR = {
     "claude": "curl -fsSL https://claude.ai/install.sh | bash",
     "agy": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+    "codex": "npm install -g @openai/codex",
 }
+# Como iniciar sesion en cada CLI (lo que doctor le dice al usuario que corra).
+_LOGIN = {"claude": "claude", "agy": "agy", "codex": "codex login"}
 
 
 def _init(args) -> int:
     cfg = Config(url=args.url, token=args.token, workdir=args.workdir)
     if args.model:
-        cfg.agy_model = args.model
+        if args.agent == "codex":
+            cfg.codex_model = args.model
+        else:
+            cfg.agy_model = args.model
 
     # Se guarda la ruta ABSOLUTA de cada CLI encontrado: el servicio de systemd
     # no siempre ve el mismo PATH que tu terminal.
@@ -45,8 +51,9 @@ def _init(args) -> int:
                 encontrados.append(nombre)
         if not encontrados:
             print(
-                "No encuentro ni `claude` ni `agy` en el PATH. Instalá al menos uno y logueate "
-                "una vez:\n  Claude Code:  " + _INSTALAR["claude"] + "\n  Antigravity:  " + _INSTALAR["agy"],
+                "No encuentro ni `claude`, ni `agy`, ni `codex` en el PATH. Instalá al menos uno y "
+                "logueate una vez:\n  Claude Code:  " + _INSTALAR["claude"] + "\n  Antigravity:  "
+                + _INSTALAR["agy"] + "\n  Codex:        " + _INSTALAR["codex"],
                 file=sys.stderr,
             )
             return 2
@@ -84,10 +91,10 @@ def _doctor(args) -> int:
             print(f"  [--] {nombre}: no esta instalado ({_INSTALAR[nombre]})")
             continue
         sesion = adaptador.sesion_iniciada()
-        estado = {True: "sesion iniciada", False: "SIN sesion: corre `%s` y logueate" % nombre, None: "sesion sin comprobar"}[sesion]
+        estado = {True: "sesion iniciada", False: "SIN sesion: corre `%s` y logueate" % _LOGIN[nombre], None: "sesion sin comprobar"}[sesion]
         print(f"  [{'ok' if sesion is not False else '!!'}] {nombre}: {adaptador.version()} -- {estado}")
         usables += 1
-    paso(usables > 0, "hay al menos un agente instalado" if usables else "no hay ningun agente instalado (claude o agy)")
+    paso(usables > 0, "hay al menos un agente instalado" if usables else "no hay ningun agente instalado (claude, agy o codex)")
     paso(os.path.isdir(cfg.workdir_abs), f"carpeta de trabajo {cfg.workdir_abs}")
 
     try:
@@ -134,7 +141,7 @@ def main() -> None:
         help="manejar SOLO este CLI (por defecto detecta claude y agy, los que esten instalados)",
     )
     p_init.add_argument("--cli", help="ruta del CLI si no esta en el PATH (con --agent)")
-    p_init.add_argument("--model", help="(agy) modelo, ver `agy models`")
+    p_init.add_argument("--model", help="(agy, codex) modelo; ver `agy models`. Sin --agent aplica a agy")
     p_init.add_argument("--workdir", default="~", help="donde arranca cada turno (default ~)")
     p_init.set_defaults(fn=_init)
 

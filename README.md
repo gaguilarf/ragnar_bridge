@@ -1,19 +1,20 @@
 # ragnar-bridge
 
-Corre **Claude Code** o **Antigravity (`agy`)** en **tu propio servidor** y le
+Corre **Claude Code**, **Antigravity (`agy`)** o **Codex** en **tu propio servidor** y le
 reenvía a Ragnar lo que emite, por una conexión WebSocket **saliente**. Tus
 credenciales del CLI no salen de tu máquina y no hace falta abrir ningún puerto.
 
 ```
 tu VPS                                          Ragnar
 ┌────────────────────────────┐  wss (saliente)  ┌───────────────────┐
-│ claude  ó  agy (tu sesión) │ ───────────────► │ /api/v1/bridge/ws │
+│ claude / agy / codex (tu   │ ───────────────► │ /api/v1/bridge/ws │
+│ sesión)                    │                  │                   │
 │    ▲                       │ ◄─────────────── │   chat de la app  │
 │    └─ ragnar-bridge        │  run / event     └───────────────────┘
 └────────────────────────────┘
 ```
 
-Un solo bridge por servidor maneja **los dos** CLIs si los tenés: detecta cuáles
+Un solo bridge por servidor maneja **todos** los CLIs que tengas: detecta cuáles
 están instalados y con sesión iniciada, y en la app elegís con cuál arranca cada
 conversación.
 
@@ -22,30 +23,31 @@ conversación.
 - Un servidor Linux con `python3` (≥ 3.9, con el módulo `venv`) y salida a
   internet por HTTPS. Mejor con un **usuario sin privilegios** (no root): el
   agente corre con los permisos de quien arranca el bridge.
-- **Una** de las dos cuentas ya funcionando en ese servidor:
-  - Claude Code con una cuenta de Claude, o
-  - Antigravity CLI con una cuenta de Google.
+- **Una** de estas cuentas ya funcionando en ese servidor:
+  - Claude Code con una cuenta de Claude,
+  - Antigravity CLI con una cuenta de Google, o
+  - Codex CLI con una cuenta de ChatGPT (o una API key de OpenAI).
 
 ## Paso 1 — Qué CLI vas a usar
 
-Con **uno** alcanza; con los dos podés elegir en el chat con cuál arranca cada
+Con **uno** alcanza; con varios podés elegir en el chat con cuál arranca cada
 conversación (una conversación sigue con el CLI con el que empezó).
 
-| | Claude Code | Antigravity (`agy`) |
-|---|---|---|
-| Comando | `claude` | `agy` |
-| Sesión de la conversación | `--session-id` / `--resume` (la maneja el CLI) | el bridge recuerda qué conversación de agy es cuál (`agy-estado.json`) |
-| Permisos de herramientas | Ragnar te muestra la tarjeta **Autorizar**; al aprobar, el bridge suma **esa** herramienta a tu `~/.claude/settings.json` | agy **deniega** solo lo que pide permiso (en modo headless no puede preguntar). Ragnar te muestra la misma tarjeta; al aprobar, **esa conversación** corre con las herramientas aprobadas |
-| Herramientas de tickets de Ragnar (MCP) | sí (token efímero de quien escribe) | sí, por un puente propio (`ragnar-tickets`, se registra solo) |
-| Cuota real de la suscripción | todavía no | todavía no |
-| Probado con | Claude Code 2.1.170 | agy 1.1.27, 1.2.2 y 1.2.7 |
+| | Claude Code | Antigravity (`agy`) | Codex |
+|---|---|---|---|
+| Comando | `claude` | `agy` | `codex` |
+| Sesión de la conversación | `--session-id` / `--resume` (la maneja el CLI) | el bridge recuerda qué conversación de agy es cuál (`agy-estado.json`) | el bridge recuerda qué hilo de Codex es cuál (`codex-estado.json`) y lo retoma con `codex exec resume` |
+| Permisos de herramientas | Ragnar te muestra la tarjeta **Autorizar**; al aprobar, el bridge suma **esa** herramienta a tu `~/.claude/settings.json` | agy **deniega** solo lo que pide permiso (en modo headless no puede preguntar). Ragnar te muestra la misma tarjeta; al aprobar, **esa conversación** corre con las herramientas aprobadas | En `exec` Codex **no puede preguntar**: lo que el sandbox no permite falla. Sin tarjeta **Autorizar**; el alcance lo fija `codex_sandbox` (default `read-only`: lee y conversa) |
+| Herramientas de tickets de Ragnar (MCP) | sí (token efímero de quien escribe) | sí, por un puente propio (`ragnar-tickets`, se registra solo) | sí, por el mismo puente, declarado en cada turno (no se escribe nada en tu `config.toml`) |
+| Cuota real de la suscripción | todavía no | todavía no | todavía no |
+| Probado con | Claude Code 2.1.170 | agy 1.1.27, 1.2.2 y 1.2.7 | codex-cli 0.157.0 |
 
 Si no elegís ninguno en la conversación nueva, Ragnar usa el primero que
-funcione (Claude Code si está listo; si no, Antigravity).
+funcione (Claude Code si está listo; si no, Antigravity; si no, Codex).
 
 ## Paso 2 — Prepará el o los CLIs en tu VPS
 
-Instalá **al menos uno** (o los dos) y comprobá que responde **antes** de instalar el
+Instalá **al menos uno** (o varios) y comprobá que responde **antes** de instalar el
 bridge. Si instalás el otro después, el bridge lo detecta solo en unos minutos.
 
 ### A) Claude Code
@@ -67,6 +69,17 @@ agy                                                 # primer arranque: login por
 agy --version
 agy models                                          # lista los modelos disponibles
 agy "-p=respondé solo OK"                           # debe contestar OK
+```
+
+### C) Codex CLI
+
+```sh
+npm install -g @openai/codex                        # requiere Node 16+
+codex login                                         # login con tu cuenta de ChatGPT (por dispositivo en un VPS:
+                                                    # `codex login --device-auth`)
+codex --version
+codex login status                                  # debe decir «Logged in using …»
+codex exec "respondé solo OK"                       # debe contestar OK
 ```
 
 Si después de instalar el comando no se encuentra, abrí una terminal nueva (el
@@ -127,8 +140,8 @@ curl -fsSL https://raw.githubusercontent.com/gaguilarf/ragnar_bridge/main/instal
   | bash -s -- --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
 ```
 
-No hace falta decirle el agente: detecta `claude` y/o `agy`. Opciones:
-`--agent claude|agy` (maneja SOLO ese), `--model M` (modelo de agy),
+No hace falta decirle el agente: detecta `claude`, `agy` y/o `codex`. Opciones:
+`--agent claude|agy|codex` (maneja SOLO ese), `--model M` (modelo de agy o de codex con `--agent codex`),
 `--workdir DIR` (dónde arranca cada turno, por defecto tu home) y `--name N`
 (un segundo bridge distinto en el mismo servidor). El script:
 
@@ -144,7 +157,8 @@ La sección **Servicios → Bootstrap de agentes** permite previsualizar e
 instalar archivos publicados por un administrador en el proyecto elegido. La
 escritura ocurre en este VPS; Ragnar no recibe ni almacena secretos del CLI.
 El bootstrap admite `.claude/agents/` y `.claude/skills/` para Claude Code, y
-`.agent/rules/` y `.agent/workflows/` para Antigravity. Archivos existentes se
+`.agent/rules/` y `.agent/workflows/` para Antigravity, y `.codex/agents/` y
+`.agents/skills/` para Codex. Archivos existentes se
 marcan como conflictos: hay que confirmar la sobrescritura y el bridge guarda
 una copia en `.ragnar-bootstrap-backups/`.
 
@@ -165,7 +179,7 @@ El bridge no adivina rutas ni crea mapeos automáticamente. Rechaza rutas fuera
 de las carpetas permitidas, enlaces simbólicos, rutas duplicadas y contenidos
 cuyo SHA-256 no coincida con el catálogo publicado.
 
-Esta función requiere `ragnar-bridge` **0.4.0 o posterior**. Para actualizar
+Esta función requiere `ragnar-bridge` **0.4.0 o posterior** (**0.5.0** para Codex). Para actualizar
 una instalación existente sin reemplazar su config:
 
 ```sh
@@ -217,6 +231,14 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | `preguntar` (default) | Ragnar te pregunta; si aprobás, esa conversación queda aprobada |
 | `denegar` | Nunca se concede: el agente solo lee y conversa |
 | `auto` | Todo aprobado siempre (`--dangerously-skip-permissions`). **Solo en un servidor desechable** |
+- **Codex**: en `codex exec` no hay nadie que apruebe comandos, así que Codex no
+  pregunta: lo que el *sandbox* no permite falla, y por eso no hay tarjeta
+  **Autorizar**. El alcance lo fija `codex_sandbox` en el config del bridge:
+  `read-only` (default: lee y conversa), `workspace-write` (edita dentro de
+  `workdir` y de `add_dirs`) o `danger-full-access`. El bridge nunca escribe en tu
+  `~/.codex/config.toml`: sandbox, modelo y las tools de tickets van como
+  overrides de cada turno, y el token de tickets viaja en el entorno del proceso,
+  nunca en el comando.
 
 ## Configuración
 
@@ -225,10 +247,10 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | campo | default | para qué |
 |---|---|---|
 | `url`, `token` | — | los que muestra la app |
-| `agents` | detecta los instalados | fuerza un subconjunto: `["claude"]`, `["agy"]` o los dos |
+| `agents` | detecta los instalados | fuerza un subconjunto: `["claude"]`, `["agy"]`, `["codex"]` o varios |
 | `agent` | — | (0.2, un solo agente) se sigue leyendo; usá `agents` |
 | `reprobar_cada` | `120` | cada cuántos segundos re-comprueba qué CLIs están instalados y con sesión |
-| `claude_cmd` / `agy_cmd` | `["claude"]` / `["agy"]` | comando del CLI (lista, por si es un wrapper) |
+| `claude_cmd` / `agy_cmd` / `codex_cmd` | `["claude"]` / `["agy"]` / `["codex"]` | comando del CLI (lista, por si es un wrapper) |
 | `workdir` | `~` | dónde arranca cada turno |
 | `add_dirs` | `[]` | directorios extra accesibles (`--add-dir`) |
 | `config_dir` | `~/.claude` | (claude) carpeta de config del CLI |
@@ -237,14 +259,17 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | `agy_timeout` | `30m` | (agy) tope de un turno (`--print-timeout`) |
 | `agy_permisos` | `preguntar` | (agy) ver arriba |
 | `agy_dir` | `~/.gemini/antigravity-cli` | (agy) dónde agy guarda sus conversaciones |
+| `codex_model` | — | (codex) modelo; vacío = el de tu `config.toml` de Codex |
+| `codex_sandbox` | `read-only` | (codex) `read-only` (lee y conversa), `workspace-write` (edita dentro de `workdir` y de `add_dirs`) o `danger-full-access` (sin restricciones: **solo en un servidor desechable**) |
+| `codex_home` | `~/.codex` | (codex) carpeta de Codex con tu sesión iniciada; solo se exporta `CODEX_HOME` si la cambiás |
 | `max_turnos` | `4` | conversaciones simultáneas |
 
 Después de editarlo: `systemctl --user restart ragnar-bridge`.
 
-## Paso 7 — Cambiar entre Claude Code y Antigravity
+## Paso 7 — Cambiar entre CLIs
 
-No hay nada que configurar: si el servidor tiene los dos con sesión iniciada, el
-chat de la app muestra un selector **Claude Code | Antigravity** al empezar una
+No hay nada que configurar: si el servidor tiene varios con sesión iniciada, el
+chat de la app muestra un selector (**Claude Code | Antigravity | Codex**) al empezar una
 conversación. Si uno deja de funcionar (te deslogueaste, lo desinstalaste), el
 bridge lo avisa en un par de minutos y la app lo marca «sin sesión»; el otro sigue andando.
 Después de loguearte, tocá **Volver a comprobar** en la app y se actualiza al instante.
@@ -260,14 +285,14 @@ instalador con `--name otro` y el token del segundo.
 ## Qué hace y qué no hace
 
 - Cada turno lanza el CLI en modo no interactivo con **tu** sesión y reenvía sus
-  eventos. Para Antigravity el bridge traduce sus eventos al formato que Ragnar
+  eventos. Para Antigravity y Codex el bridge traduce sus eventos al formato que Ragnar
   entiende (texto, herramientas y resultados, uso de tokens).
 - Si se corta la conexión con Ragnar, el bridge **mata** los turnos en curso:
   nadie estaría viendo lo que el agente hace en tu servidor. Reconecta solo, con
   backoff.
 - Ragnar ve el contenido de tus conversaciones (prompts y resultados de
   herramientas, estos últimos recortados). Lo que **no** ve es tu sesión de
-  Claude o de Google.
+  Claude, de Google o de OpenAI.
 - Un token filtrado equivale a ejecutar comandos en tu servidor con los permisos
   del usuario del bridge: revocalo desde **Mis servidores** (corta el socket en
   el acto) y usá un usuario sin privilegios.
@@ -279,13 +304,15 @@ instalador con `--name otro` y el token del segundo.
 | La app dice *«Tu servidor no está conectado»* | el servicio está caído o no sale a internet | `systemctl --user status ragnar-bridge`; `ragnar-bridge doctor` |
 | `doctor`: *«Credencial inválida o revocada»* | token mal copiado o servidor revocado | generá otro servidor en la app y reinstalá |
 | `doctor`: *«Protocolo … no soportado»* | Ragnar es más nuevo que tu bridge | actualizá (más abajo) |
-| `doctor`: *«no encuentro `claude`/`agy`»* | el servicio no ve tu PATH | reinstalá desde una terminal donde el comando funcione, o poné la ruta absoluta en `claude_cmd`/`agy_cmd` |
+| `doctor`: *«no encuentro `claude`/`agy`»* | el servicio no ve tu PATH | reinstalá desde una terminal donde el comando funcione, o poné la ruta absoluta en `claude_cmd`/`agy_cmd`/`codex_cmd` |
 | El servicio se apaga al cerrar SSH | falta *linger* | como root: `loginctl enable-linger <usuario>` |
 | Instalé con otro token y la app sigue *«Esperando que tu servidor se conecte»* | con el instalador de la 0.2 el servicio ya corría y no se reiniciaba: seguía con la config vieja | volvé a correr el comando de la app (la 0.3 reinicia el servicio), o `systemctl --user restart ragnar-bridge` |
 | La app no ofrece Antigravity (o Claude) | ese CLI no está instalado, o le falta la sesión | `ragnar-bridge doctor` dice cuál; se corrige logueándose y el bridge lo detecta solo |
 | El servicio no reintenta y sale con 78 | Ragnar rechazó el token | es a propósito: generá un token nuevo |
 | (agy) el agente dice que no pudo ejecutar un comando | agy denegó la herramienta | aprobá la tarjeta en la app, o `agy_permisos` |
 | (agy) un turno largo se corta a los 30 min | `agy_timeout` | subilo en el config (`"2h"`) |
+| (codex) el agente dice que no pudo escribir o ejecutar algo | el sandbox es `read-only` | subí `codex_sandbox` a `workspace-write` en el config y reiniciá |
+| (codex) `doctor` dice *«SIN sesión»* | Codex no tiene login en el usuario del bridge | `codex login` (o `codex login --device-auth`) con ese usuario; el bridge lo detecta solo |
 | El agente dice que no tiene las tools de tickets | bridge anterior a la 0.3.3 (usaba una URL del MCP que Ragnar rechaza) | actualizá (arriba) y abrí una conversación nueva |
 | (claude) *«No conversation found»* / *«Session ID already in use»* | el bridge ya lo evita (comprueba la sesión y limpia el lock) | si aparece igual, abrí un issue con el log |
 
@@ -309,7 +336,7 @@ Tu configuración (`~/.config/ragnar-bridge/config.json`, con el token del servi
 
 Si preferís, volver a correr el comando de instalación que muestra la app (Paso 4) también actualiza y reinicia.
 
-Versiones que importan: **0.3.2** manda a cada turno el token de tickets de quien escribe; **0.3.3** arregla la URL del MCP de tickets (sin ella el agente decía que no tenía las tools de tickets).
+Versiones que importan: **0.3.2** manda a cada turno el token de tickets de quien escribe; **0.3.3** arregla la URL del MCP de tickets (sin ella el agente decía que no tenía las tools de tickets); **0.5.0** suma Codex CLI.
 
 ## Desinstalar
 
@@ -340,8 +367,9 @@ pytest
 ```
 
 Las pruebas usan un Ragnar de mentira (`tests/helpers.py`) y dobles del CLI
-(`tests/fake_claude.py`, `tests/fake_agy.py`); el de agy emite los eventos reales
-capturados de agy 1.1.27.
+(`tests/fake_claude.py`, `tests/fake_agy.py`, `tests/fake_codex.py`); el de agy emite
+los eventos reales capturados de agy 1.1.27 y el de Codex el JSONL de
+`codex exec --json` (codex-cli 0.157.0).
 
 El protocolo está documentado en `services/bridge_hub.py` de `ragnar_group_back`
 (fuente de verdad); `PROTOCOLO` en `ragnar_bridge/__init__.py` tiene que
@@ -354,3 +382,4 @@ arme el comando y traduzca sus eventos al formato de Claude Code (ver
 - Cuota real de la suscripción como comando del protocolo (hoy `POST /claude/quota`
   responde 501).
 - Tools de tickets de Ragnar (MCP) para Antigravity.
+- Tarjeta **Autorizar** para Codex (hoy el alcance se fija con `codex_sandbox`).

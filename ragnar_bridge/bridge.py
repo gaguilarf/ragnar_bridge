@@ -32,6 +32,14 @@ SALIDA_AUTH = 78
 MAX_FRAME = 32 * 1024 * 1024
 
 
+# Donde puede escribir el bootstrap dentro de un proyecto, por CLI.
+PREFIJOS_BOOTSTRAP = {
+    "claude": (".claude/agents/", ".claude/skills/"),
+    "agy": (".agent/rules/", ".agent/workflows/"),
+    "codex": (".codex/agents/", ".agents/skills/"),
+}
+
+
 class ErrorFatal(Exception):
     """Ragnar rechazo la conexion de forma que reintentar no arregla nada
     (token revocado/invalido, protocolo incompatible)."""
@@ -203,7 +211,7 @@ class Bridge:
         project_key = mensaje.get("project_key")
         mode = mensaje.get("mode")
         overwrite = mensaje.get("overwrite") is True
-        if cli not in ("claude", "agy") or mode not in ("preview", "apply"):
+        if cli not in PREFIJOS_BOOTSTRAP or mode not in ("preview", "apply"):
             raise ValueError("CLI o modo de bootstrap inválido.")
         if not isinstance(project_key, str) or project_key not in self.cfg.project_paths:
             raise ValueError("Este proyecto no tiene una ruta configurada en el bridge.")
@@ -216,10 +224,7 @@ class Bridge:
         raiz = Path(self.cfg.project_paths[project_key]).expanduser().resolve(strict=True)
         if not raiz.is_dir():
             raise ValueError("La ruta configurada para el proyecto no es un directorio.")
-        prefijos = {
-            "claude": (".claude/agents/", ".claude/skills/"),
-            "agy": (".agent/rules/", ".agent/workflows/"),
-        }[cli]
+        prefijos = PREFIJOS_BOOTSTRAP[cli]
         preparados = []
         vistos = set()
         for archivo in archivos:

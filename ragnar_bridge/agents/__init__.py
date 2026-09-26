@@ -14,6 +14,10 @@ def _crear(nombre: str, cfg: Config, estado_dir: Path) -> Adaptador:
         from .agy import AgyAdaptador
 
         return AgyAdaptador(cfg, estado_dir)
+    if nombre == "codex":
+        from .codex import CodexAdaptador
+
+        return CodexAdaptador(cfg, estado_dir)
     raise ValueError(f"Agente desconocido: {nombre!r}")
 
 

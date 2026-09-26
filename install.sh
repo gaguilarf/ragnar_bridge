@@ -4,9 +4,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/gaguilarf/ragnar_bridge/main/install.sh \
 #     | bash -s -- --url wss://panel.ragnargroup.app/api/v1/bridge/ws --token ragbrg_...
 #
-# Detecta solo los CLIs instalados en el servidor (Claude Code y/o Antigravity):
+# Detecta solo los CLIs instalados en el servidor (Claude Code, Antigravity y/o Codex):
 # con al menos uno alcanza, y la app te deja elegir entre los que funcionan.
-# --agent claude|agy   opcional: maneja SOLO ese CLI.
+# --agent claude|agy|codex   opcional: maneja SOLO ese CLI.
 #
 # El bridge usa TU sesion del CLI: no te pide credenciales y Ragnar nunca las
 # ve. Volver a correr este script con otro token REEMPLAZA la config y reinicia
@@ -35,10 +35,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$URL" ] || [ -z "$TOKEN" ]; then
-  echo "Uso: install.sh --url wss://.../api/v1/bridge/ws --token ragbrg_... [--agent claude|agy] [--workdir DIR] [--model M] [--name N]" >&2
+  echo "Uso: install.sh --url wss://.../api/v1/bridge/ws --token ragbrg_... [--agent claude|agy|codex] [--workdir DIR] [--model M] [--name N]" >&2
   exit 2
 fi
-case "$AGENT" in ""|claude|agy) ;; *) echo "--agent tiene que ser claude o agy." >&2; exit 2 ;; esac
+case "$AGENT" in ""|claude|agy|codex) ;; *) echo "--agent tiene que ser claude, agy o codex." >&2; exit 2 ;; esac
 
 command -v python3 >/dev/null || { echo "Falta python3 (>= 3.9, con el modulo venv)." >&2; exit 1; }
 
@@ -54,10 +54,12 @@ else
   DETECTADOS=""
   command -v claude >/dev/null && DETECTADOS="$DETECTADOS claude"
   command -v agy >/dev/null && DETECTADOS="$DETECTADOS agy"
+  command -v codex >/dev/null && DETECTADOS="$DETECTADOS codex"
   if [ -z "$DETECTADOS" ]; then
-    echo "No encuentro ni \`claude\` ni \`agy\` en el PATH. Instala al menos uno y logueate corriendolo una vez:" >&2
+    echo "No encuentro ni \`claude\`, ni \`agy\`, ni \`codex\` en el PATH. Instala al menos uno y logueate corriendolo una vez:" >&2
     echo "  Claude Code:  curl -fsSL https://claude.ai/install.sh | bash" >&2
     echo "  Antigravity:  curl -fsSL https://antigravity.google/cli/install.sh | bash" >&2
+    echo "  Codex:        npm install -g @openai/codex   (y despues: codex login)" >&2
     echo "(si acabas de instalarlo, abri una terminal nueva para que el PATH se recargue)" >&2
     exit 1
   fi
