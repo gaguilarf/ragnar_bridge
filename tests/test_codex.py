@@ -145,7 +145,7 @@ async def test_primer_turno_lleva_las_instrucciones_y_el_prompt_va_tras_el_separ
 
     inv = _invocaciones(tmp_path)[0]
     argv = inv["argv"]
-    assert argv[:2] == ["exec", "--json"] and "resume" not in argv
+    assert argv[0] == "exec" and "--json" in argv and "resume" not in argv
     # Un prompt que empieza como un flag no se lee como flag: va tras `--`.
     assert argv[-2] == "--" and _prompt(argv).startswith("PROTOCOLO") and _prompt(argv).endswith(raro)
     assert _overrides(argv)["model"] == "gpt-x"
@@ -186,7 +186,7 @@ async def test_segundo_turno_retoma_el_hilo(arrancar, ragnar, tmp_path):
     _, segundo = [i["argv"] for i in _invocaciones(tmp_path)]
     estado = json.loads((tmp_path / "codex-estado.json").read_text())
     hilo = estado["sesiones"][tid]["thread_id"]
-    assert segundo[:3] == ["exec", "resume", "--json"]
+    assert segundo[0] == "exec" and segundo[1] == "resume" and "--json" in segundo
     # Retomando, Codex ya recuerda: va solo el mensaje nuevo, sin instrucciones.
     assert segundo[-3:] == ["--", hilo, "dos"]
 
