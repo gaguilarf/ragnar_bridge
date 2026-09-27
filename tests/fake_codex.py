@@ -26,6 +26,22 @@ if argv == ["login", "status"]:
     print("Logged in using ChatGPT" if os.environ.get("FAKE_CODEX_LOGIN", "1") == "1" else "Not logged in")
     sys.exit(0 if os.environ.get("FAKE_CODEX_LOGIN", "1") == "1" else 1)
 
+if argv == ["app-server"]:
+    # JSON-RPC por stdio: forma real de codex-cli 0.157.0.
+    for linea in sys.stdin:
+        msg = json.loads(linea)
+        if msg.get("method") == "initialize":
+            print(json.dumps({"id": msg["id"], "result": {"userAgent": "fake", "codexHome": "x"}}), flush=True)
+        elif msg.get("method") == "account/rateLimits/read":
+            limite = {"limitId": "codex", "limitName": None, "planType": "team",
+                      "primary": {"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1790501311},
+                      "secondary": {"usedPercent": 40, "windowDurationMins": 10080, "resetsAt": 1791054073}}
+            extra = {"limitId": "codex_spark", "limitName": "Spark", "planType": "team",
+                     "primary": {"usedPercent": 3, "windowDurationMins": 300, "resetsAt": 1790501311}, "secondary": None}
+            print(json.dumps({"id": msg["id"], "result": {"rateLimits": limite, "rateLimitsByLimitId": {"codex": limite, "codex_spark": extra}}}), flush=True)
+            break
+    sys.exit(0)
+
 assert argv[0] == "exec", argv
 base = os.environ["CODEX_HOME"]
 prompt = argv[-1]

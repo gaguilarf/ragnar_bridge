@@ -29,15 +29,19 @@ codex-cli 0.157.0; ver tests/test_codex.py para las formas de los eventos):
 import json
 import logging
 import os
+import queue
 import subprocess
 import sys
+import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import Config
 from ..protocolo import _PATRON_UUID, Turno
 from ..tickets import token_de_tickets, url_mcp_tickets
-from .base import Adaptador, Comando, Traductor
+from .base import Adaptador, Comando, Traductor, bloque_de_cuota, ventana
 
 log = logging.getLogger("ragnar_bridge")
 
@@ -94,6 +98,88 @@ class CodexAdaptador(Adaptador):
         except (OSError, subprocess.SubprocessError):
             return None
         return salida.returncode == 0
+
+    def cuota(self, version: str) -> Optional[dict]:
+        """Limites de la suscripcion por `codex app-server` (JSON-RPC por stdio,
+        `account/rateLimits/read`): no lanza ningun turno ni gasta cuota."""
+        try:
+            respuesta = self._rpc(
+                [
+                    {"method": "initialize", "id": 0, "params": {"clientInfo": {"name": "ragnar-bridge", "title": "Ragnar Bridge", "version": "0"}}},
+                    {"method": "initialized"},
+                    {"method": "account/rateLimits/read", "id": 1},
+                ],
+                esperar=1,
+            )
+            resultado = (respuesta or {}).get("result") or {}
+            limites = resultado.get("rateLimitsByLimitId") or {}
+            if not limites and resultado.get("rateLimits"):
+                limites = {"codex": resultado["rateLimits"]}
+            bloques = []
+            for id_limite, limite in limites.items():
+                # El limite principal no lleva grupo; los extra (otros modelos) si.
+                grupo = None if id_limite == "codex" else str(limite.get("limitName") or id_limite)[:60]
+                for ventana_ in (limite.get("primary"), limite.get("secondary")):
+                    if not isinstance(ventana_, dict):
+                        continue
+                    resetea = ventana_.get("resetsAt")
+                    bloques.append(
+                        bloque_de_cuota(
+                            grupo,
+                            ventana(int(ventana_["windowDurationMins"])),
+                            float(ventana_["usedPercent"]),
+                            datetime.fromtimestamp(resetea, timezone.utc) if resetea else None,
+                        )
+                    )
+            plan = (limites.get("codex") or {}).get("planType")
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError):
+            log.debug("No se pudo leer la cuota de Codex.", exc_info=True)
+            return None
+        return {"plan": str(plan)[:30] if plan else None, "bloques": bloques} if bloques else None
+
+    def _rpc(self, mensajes: List[dict], esperar: int, timeout: float = 25) -> Optional[dict]:
+        """Lanza `codex app-server`, manda los mensajes JSON-RPC y devuelve la
+        respuesta con id `esperar`. Un hilo lee el stdout: `select` no sirve con
+        pipes en Windows."""
+        proceso = subprocess.Popen(
+            [*self.cmd, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            env=self._entorno_base(),
+        )
+        lineas: "queue.Queue[Optional[str]]" = queue.Queue()
+
+        def leer() -> None:
+            for linea in proceso.stdout:
+                lineas.put(linea)
+            lineas.put(None)
+
+        threading.Thread(target=leer, daemon=True).start()
+        try:
+            for mensaje in mensajes:
+                proceso.stdin.write(json.dumps(mensaje) + "\n")
+            proceso.stdin.flush()
+            limite = time.monotonic() + timeout
+            while (restante := limite - time.monotonic()) > 0:
+                try:
+                    linea = lineas.get(timeout=restante)
+                except queue.Empty:
+                    break
+                if linea is None:
+                    break
+                try:
+                    respuesta = json.loads(linea)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(respuesta, dict) and respuesta.get("id") == esperar:
+                    return respuesta
+            return None
+        finally:
+            proceso.kill()
+            proceso.wait()
 
     # ---- estado propio (session_id de Ragnar -> hilo de Codex)
 

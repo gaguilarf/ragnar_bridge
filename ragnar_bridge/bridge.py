@@ -104,6 +104,11 @@ class Bridge:
             ", ".join(a["name"] for a in self.agentes) or "ninguno instalado",
         )
 
+        # La cuota no viaja en el `auth` (lanzar un proceso por CLI lo demoraria):
+        # se manda enseguida en un frame `agents` aparte.
+        tarea_cuota = asyncio.create_task(self._sondear_y_avisar())
+        self._tareas_aux.add(tarea_cuota)
+        tarea_cuota.add_done_callback(self._tareas_aux.discard)
         vigia = asyncio.create_task(self._vigilar_agentes())
         try:
             async for crudo in ws:
@@ -123,7 +128,7 @@ class Bridge:
 
     async def _sondear_y_avisar(self) -> None:
         try:
-            self.agentes = await asyncio.to_thread(sondear, self.adaptadores)
+            self.agentes = await asyncio.to_thread(sondear, self.adaptadores, True)
             await self.enviar({"type": "agents", "agents": self.agentes})
         except Exception:
             log.exception("No se pudo responder al pedido de re-sondeo.")
@@ -135,7 +140,7 @@ class Bridge:
         while True:
             await asyncio.sleep(self.cfg.reprobar_cada)
             try:
-                nuevos = await asyncio.to_thread(sondear, self.adaptadores)
+                nuevos = await asyncio.to_thread(sondear, self.adaptadores, True)
                 if nuevos != self.agentes:
                     self.agentes = nuevos
                     await self.enviar({"type": "agents", "agents": nuevos})

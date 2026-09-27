@@ -32,19 +32,23 @@ def crear_adaptador(cfg: Config, estado_dir: Path) -> Adaptador:
     return next(iter(crear_adaptadores(cfg, estado_dir).values()))
 
 
-def sondear(adaptadores: Dict[str, Adaptador]) -> List[dict]:
+def sondear(adaptadores: Dict[str, Adaptador], con_cuota: bool = False) -> List[dict]:
     """Los agentes que de verdad estan instalados, con su version y si tienen
-    sesion iniciada (True/False/None = no se sabe). Bloquea (lanza los CLIs):
-    desde codigo async, con asyncio.to_thread."""
+    sesion iniciada (True/False/None = no se sabe). Con `con_cuota` cada uno
+    suma su `quota` (o None) -- cuesta lanzar otro proceso por CLI, asi que el
+    primer sondeo, del que depende el `auth`, no la pide. Bloquea (lanza los
+    CLIs): desde codigo async, con asyncio.to_thread."""
     encontrados = []
     for nombre, adaptador in adaptadores.items():
         if not adaptador.encontrado():
             continue
-        encontrados.append(
-            {
-                "name": nombre,
-                "cli_version": adaptador.version(),
-                "login": adaptador.sesion_iniciada(),
-            }
-        )
+        info = {
+            "name": nombre,
+            "cli_version": adaptador.version(),
+            "login": adaptador.sesion_iniciada(),
+        }
+        if con_cuota:
+            # Sin sesion no hay cuota que leer.
+            info["quota"] = adaptador.cuota(info["cli_version"]) if info["login"] is not False else None
+        encontrados.append(info)
     return encontrados

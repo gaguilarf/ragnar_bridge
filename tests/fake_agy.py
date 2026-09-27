@@ -20,7 +20,7 @@ argv = sys.argv[1:]
 
 # Sondeos del bridge (no son turnos).
 if argv == ["--version"]:
-    print("fake-agy 1.0")
+    print(os.environ.get("FAKE_AGY_VERSION", "fake-agy 1.0"))
     sys.exit(0)
 if argv == ["models"]:
     print("fake-model\tFake")
@@ -28,6 +28,19 @@ if argv == ["models"]:
 
 prompt = next(a for a in argv if a.startswith("-p="))[3:]
 base = os.environ["AGY_FAKE_DIR"]
+
+# Comando de solo lectura de agy >= 1.1.11: no arranca un turno (forma real
+# capturada de agy 1.2.11).
+if prompt == "/usage":
+    with open(os.path.join(base, "usage-llamado"), "a"):
+        pass
+    print(json.dumps({"conversation_id": "", "status": "SUCCESS", "response": "", "num_turns": 0, "command": {"name": "usage", "data": {"groups": [
+        {"name": "Gemini Models", "buckets": [
+            {"id": "gemini-weekly", "name": "Weekly Limit Remaining", "window": "weekly", "remaining_fraction": 0.75, "reset_time": "2026-10-04T02:10:32Z"},
+            {"id": "gemini-5h", "name": "Five Hour Limit Remaining", "window": "5h", "remaining_fraction": 1, "reset_time": "2026-09-27T09:31:35Z"}]},
+        {"name": "Claude and GPT models", "buckets": [
+            {"id": "3p-5h", "name": "Five Hour Limit Remaining", "window": "5h", "remaining_fraction": 0.5, "reset_time": "2026-09-27T09:31:35Z"}]}]}}}))
+    sys.exit(0)
 
 with open(os.path.join(base, "argvs.jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps(argv) + "\n")

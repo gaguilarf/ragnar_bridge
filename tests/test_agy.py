@@ -282,3 +282,48 @@ async def test_probar_conexion_con_token_invalido_es_error_fatal(ragnar):
     cfg = Config(url=ragnar.url, token="ragbrg_otro", agents=["agy"], agy_cmd=[sys.executable, FAKE_AGY])
     with pytest.raises(ErrorFatal):
         await probar_conexion(cfg)
+
+
+# ---- cuota (/usage)
+
+
+def _adaptador(tmp_path, monkeypatch):
+    from ragnar_bridge.agents.agy import AgyAdaptador
+
+    (tmp_path / "agy").mkdir(exist_ok=True)
+    monkeypatch.setenv("AGY_FAKE_DIR", str(tmp_path / "agy"))
+    cfg = Config(url="ws://x", token="t", agents=["agy"], agy_cmd=[sys.executable, FAKE_AGY], agy_dir=str(tmp_path / "agy"))
+    return AgyAdaptador(cfg, tmp_path)
+
+
+def test_cuota_de_agy_se_normaliza_a_bloques(tmp_path, monkeypatch):
+    cuota = _adaptador(tmp_path, monkeypatch).cuota("1.2.11")
+    assert cuota == {
+        "plan": None,
+        "bloques": [
+            {"grupo": "Gemini Models", "ventana": "semana", "usado": 25, "resetea": "2026-10-04T02:10:32Z"},
+            {"grupo": "Gemini Models", "ventana": "5h", "usado": 0, "resetea": "2026-09-27T09:31:35Z"},
+            {"grupo": "Claude and GPT models", "ventana": "5h", "usado": 50, "resetea": "2026-09-27T09:31:35Z"},
+        ],
+    }
+
+
+def test_un_agy_anterior_a_1_1_11_ni_se_consulta(tmp_path, monkeypatch):
+    # Ahi `-p "/usage"` iria al modelo como un prompt (y gastaria cuota).
+    adaptador = _adaptador(tmp_path, monkeypatch)
+    assert adaptador.cuota("1.1.10") is None and adaptador.cuota("desconocida") is None
+    assert not (tmp_path / "agy" / "usage-llamado").exists()
+
+
+async def test_la_cuota_llega_en_un_frame_agents_despues_del_auth(arrancar, ragnar, monkeypatch):
+    monkeypatch.setenv("FAKE_AGY_VERSION", "fake-agy 1.2.11")
+    await arrancar()
+    # El auth no la lleva (no demora la conexion)...
+    assert "quota" not in ragnar.auth_frame["agents"][0]
+    # ...llega enseguida en un frame `agents`.
+    while True:
+        msg = await asyncio.wait_for(ragnar.recibidos.get(), 15)
+        if msg["type"] == "agents":
+            break
+    agy = msg["agents"][0]
+    assert agy["name"] == "agy" and len(agy["quota"]["bloques"]) == 3

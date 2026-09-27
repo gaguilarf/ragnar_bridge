@@ -334,3 +334,27 @@ async def test_probar_conexion_anuncia_codex(ragnar, tmp_path):
     cfg = Config(url=ragnar.url, token=TOKEN, agents=["codex"], codex_cmd=[sys.executable, FAKE_CODEX], codex_home=str(tmp_path / "codex"))
     assert await probar_conexion(cfg) == "t"
     assert ragnar.auth_frame["protocol"] == PROTOCOLO and ragnar.auth_frame["agents"][0]["name"] == "codex"
+
+
+# ---- cuota (/usage)
+
+
+def test_cuota_de_codex_se_lee_de_app_server(tmp_path):
+    from ragnar_bridge.agents.codex import CodexAdaptador
+
+    (tmp_path / "codex").mkdir()
+    cfg = Config(url="ws://x", token="t", agents=["codex"], codex_cmd=[sys.executable, FAKE_CODEX], codex_home=str(tmp_path / "codex"))
+    cuota = CodexAdaptador(cfg, tmp_path).cuota("codex-cli 0.157.0")
+    assert cuota["plan"] == "team"
+    assert cuota["bloques"] == [
+        {"grupo": None, "ventana": "5h", "usado": 12, "resetea": "2026-09-27T09:28:31Z"},
+        {"grupo": None, "ventana": "semana", "usado": 40, "resetea": "2026-10-03T19:01:13Z"},
+        {"grupo": "Spark", "ventana": "5h", "usado": 3, "resetea": "2026-09-27T09:28:31Z"},
+    ]
+
+
+def test_si_app_server_no_existe_la_cuota_es_none_y_no_lanza(tmp_path):
+    from ragnar_bridge.agents.codex import CodexAdaptador
+
+    cfg = Config(url="ws://x", token="t", agents=["codex"], codex_cmd=["/no/existe/codex"])
+    assert CodexAdaptador(cfg, tmp_path).cuota("x") is None

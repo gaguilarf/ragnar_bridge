@@ -27,15 +27,17 @@ Diferencias con Claude Code que el adaptador absorbe (verificado contra agy
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..config import Config
 from ..protocolo import Turno
 from ..tickets import token_de_tickets, url_mcp_tickets
-from .base import Adaptador, Comando, Traductor
+from .base import Adaptador, Comando, Traductor, bloque_de_cuota
 
 log = logging.getLogger("ragnar_bridge")
 
@@ -50,6 +52,9 @@ _SEPARADOR = "\n\n---\n\n"
 # propio, para no pisar un servidor "tickets" que ya tengas por tu cuenta.
 NOMBRE_MCP = "ragnar-tickets"
 _INTENTOS_REGISTRO = 3
+
+# Primera version de agy que contesta `-p "/usage"` sin arrancar un turno.
+_AGY_USAGE_DESDE = (1, 1, 11)
 
 
 def conversacion_existe(cfg: Config, conversation_id: str) -> bool:
@@ -76,6 +81,42 @@ class AgyAdaptador(Adaptador):
         except (OSError, subprocess.SubprocessError):
             return None
         return salida.returncode == 0
+
+    def cuota(self, version: str) -> Optional[dict]:
+        """`agy -p "/usage" --output-format json`: desde agy 1.1.11 los comandos
+        de solo lectura se contestan en modo print SIN arrancar un turno ni
+        gastar cuota. Con un agy mas viejo `/usage` iria al modelo como un
+        prompt cualquiera, asi que ahi ni se intenta."""
+        match = re.search(r"(\d+)\.(\d+)\.(\d+)", version or "")
+        if not match or tuple(map(int, match.groups())) < _AGY_USAGE_DESDE:
+            return None
+        try:
+            salida = subprocess.run(
+                [*self.cmd, "-p=/usage", "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            comando = json.loads(salida.stdout).get("command") or {}
+            if comando.get("name") != "usage":
+                return None
+            bloques = []
+            for grupo in (comando.get("data") or {}).get("groups") or []:
+                for cubo in grupo.get("buckets") or []:
+                    restante = float(cubo["remaining_fraction"])
+                    reset = cubo.get("reset_time")
+                    bloques.append(
+                        bloque_de_cuota(
+                            str(grupo.get("name") or "")[:60] or None,
+                            "semana" if cubo.get("window") == "weekly" else str(cubo.get("window") or "")[:12],
+                            (1 - restante) * 100,
+                            datetime.fromisoformat(reset.replace("Z", "+00:00")) if reset else None,
+                        )
+                    )
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError):
+            log.debug("No se pudo leer la cuota de agy.", exc_info=True)
+            return None
+        return {"plan": None, "bloques": bloques} if bloques else None
 
     # ---- MCP de tickets
 
