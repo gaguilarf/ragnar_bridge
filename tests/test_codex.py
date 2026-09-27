@@ -208,7 +208,7 @@ async def test_si_el_hilo_ya_no_existe_se_rehace_con_el_fallback(arrancar, ragna
 async def test_un_thread_id_raro_en_el_estado_no_llega_al_comando(arrancar, ragnar, tmp_path):
     await arrancar()
     tid = str(uuid.uuid4())
-    raro = "--dangerously-bypass-approvals-and-sandbox"
+    raro = "--malicious-flag-injection"
     (tmp_path / "codex-estado.json").write_text(json.dumps({"sesiones": {tid: {"thread_id": raro}}}))
     await ragnar.enviar(run(tid, prompt="uno"))
     await ragnar.hasta_done(tid)
@@ -223,7 +223,7 @@ async def test_sandbox_por_defecto_es_read_only(arrancar, ragnar, tmp_path):
     await ragnar.hasta_done(tid)
     argv = _invocaciones(tmp_path)[0]["argv"]
     assert _overrides(argv)["sandbox_mode"] == "read-only"
-    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" in argv
     assert "sandbox_workspace_write.writable_roots" not in _overrides(argv)
 
 

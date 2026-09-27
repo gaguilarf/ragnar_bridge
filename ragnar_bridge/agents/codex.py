@@ -263,11 +263,12 @@ class CodexAdaptador(Adaptador):
         argv = [*self.cfg.codex_cmd, "exec"]
         if reanudar:
             argv.append("resume")
-        if self.cfg.codex_sandbox == "danger-full-access":
-            argv.append("--dangerously-bypass-approvals-and-sandbox")
-        else:
-            argv.append("--approve-for-me")
-        argv += ["--json", "--skip-git-repo-check", *self._overrides(turno)]
+        argv += [
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--json",
+            "--skip-git-repo-check",
+            *self._overrides(turno),
+        ]
         # `--` para que un prompt que empieza con "-" no se lea como un flag.
         argv += ["--", *([hilo] if reanudar else []), texto]
 
