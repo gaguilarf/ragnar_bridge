@@ -149,7 +149,30 @@ async def test_primer_turno_lleva_las_instrucciones_y_el_prompt_va_tras_el_separ
     # Un prompt que empieza como un flag no se lee como flag: va tras `--`.
     assert argv[-2] == "--" and _prompt(argv).startswith("PROTOCOLO") and _prompt(argv).endswith(raro)
     assert _overrides(argv)["model"] == "gpt-x"
+    assert _overrides(argv)["model_reasoning_effort"] == "medium"
     assert inv["cwd"] == str(tmp_path / "work")
+
+
+async def test_modelo_y_razonamiento_se_fijan_siempre_por_defecto(arrancar, ragnar, tmp_path):
+    await arrancar()
+    tid = str(uuid.uuid4())
+    await ragnar.enviar(run(tid))
+    await ragnar.hasta_done(tid)
+    await ragnar.enviar(run(tid, prompt="dos"))
+    await ragnar.hasta_done(tid)
+    # En el primer turno y tambien al retomar el hilo (exec resume).
+    for inv in _invocaciones(tmp_path):
+        ov = _overrides(inv["argv"])
+        assert ov["model"] == "gpt-5.6-terra" and ov["model_reasoning_effort"] == "medium"
+
+
+async def test_vacio_no_fija_modelo_ni_razonamiento(arrancar, ragnar, tmp_path):
+    await arrancar(codex_model="", codex_reasoning="")
+    tid = str(uuid.uuid4())
+    await ragnar.enviar(run(tid))
+    await ragnar.hasta_done(tid)
+    ov = _overrides(_invocaciones(tmp_path)[0]["argv"])
+    assert "model" not in ov and "model_reasoning_effort" not in ov
 
 
 async def test_segundo_turno_retoma_el_hilo(arrancar, ragnar, tmp_path):
@@ -295,6 +318,15 @@ def test_config_valida_codex(tmp_path):
     ruta.write_text(json.dumps({**base, "codex_cmd": "codex"}))
     cfg = cargar(ruta)
     assert cfg.codex_cmd == ["codex"] and cfg.codex_sandbox == "read-only" and cfg.codex_home == "~/.codex"
+    assert cfg.codex_model == "gpt-5.6-terra" and cfg.codex_reasoning == "medium"
+    # `null` (lo que escribe init) vale el default; "" es no fijarlo.
+    ruta.write_text(json.dumps({**base, "codex_model": None, "codex_reasoning": None}))
+    assert cargar(ruta).codex_model == "gpt-5.6-terra"
+    ruta.write_text(json.dumps({**base, "codex_model": "", "codex_reasoning": ""}))
+    assert (cargar(ruta).codex_model, cargar(ruta).codex_reasoning) == ("", "")
+    ruta.write_text(json.dumps({**base, "codex_reasoning": "enorme"}))
+    with pytest.raises(ConfigError, match="codex_reasoning"):
+        cargar(ruta)
 
 
 async def test_probar_conexion_anuncia_codex(ragnar, tmp_path):

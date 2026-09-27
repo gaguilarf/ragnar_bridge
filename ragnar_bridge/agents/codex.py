@@ -14,7 +14,7 @@ codex-cli 0.157.0; ver tests/test_codex.py para las formas de los eventos):
 * No hay `--append-system-prompt`: las instrucciones de Ragnar se anteponen al
   prompt del primer turno de cada conversacion (despues viven en el hilo).
 * Configuracion aislada: el bridge NUNCA escribe en el `config.toml` de Codex.
-  Todo lo que necesita (sandbox, modelo, MCP de tickets) va por overrides `-c`
+  Todo lo que necesita (sandbox, modelo y razonamiento, MCP de tickets) va por overrides `-c`
   de ESE turno. La carpeta de Codex es `codex_home` (por defecto `~/.codex`,
   con tu sesion ya iniciada); solo se exporta CODEX_HOME si la moviste.
 * Sin secretos en el comando: el token de tickets de cada turno viaja en el
@@ -139,6 +139,8 @@ class CodexAdaptador(Adaptador):
             pares.append(("sandbox_workspace_write.writable_roots", _toml(raices)))
         if cfg.codex_model:
             pares.append(("model", _toml(cfg.codex_model)))
+        if cfg.codex_reasoning:
+            pares.append(("model_reasoning_effort", _toml(cfg.codex_reasoning)))
         if self._tickets(turno):
             pares += [
                 (f"mcp_servers.{NOMBRE_MCP}.command", _toml(sys.executable)),

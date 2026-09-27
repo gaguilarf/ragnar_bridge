@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 AGENTES = ("claude", "agy", "codex")
 AGY_PERMISOS = ("preguntar", "denegar", "auto")
 CODEX_SANDBOXES = ("read-only", "workspace-write", "danger-full-access")
+CODEX_RAZONAMIENTOS = ("low", "medium", "high", "xhigh", "max", "ultra")
 
 
 class ConfigError(Exception):
@@ -57,13 +58,16 @@ class Config:
     #   auto                -- siempre aprobado (--dangerously-skip-permissions).
     #                          Solo en un servidor desechable.
     agy_permisos: str = "preguntar"
-    # Codex: modelo (vacio = el default de tu config.toml), carpeta de Codex (con
+    # Codex: modelo y esfuerzo de razonamiento -- SIEMPRE se fijan en cada turno
+    # (ignoran los de tu config.toml de Codex; "" = no fijar y usar los suyos),
+    # carpeta de Codex (con
     # tu sesion ya iniciada; el bridge nunca escribe en su config.toml) y sandbox
     # de las herramientas. En `exec` nadie aprueba comandos, asi que lo que el
     # sandbox no permite falla: `read-only` (default) solo lee y conversa,
     # `workspace-write` edita dentro de workdir (y de `add_dirs`),
     # `danger-full-access` no restringe nada -- solo en un servidor desechable.
-    codex_model: Optional[str] = None
+    codex_model: Optional[str] = "gpt-5.6-terra"
+    codex_reasoning: Optional[str] = "medium"
     codex_home: str = "~/.codex"
     codex_sandbox: str = "read-only"
     # Donde arranca cada turno. Ragnar no manda ruta (una ruta de SU servidor
@@ -133,6 +137,11 @@ def cargar(ruta: Optional[Path] = None) -> Config:
         raise ConfigError("'url' tiene que empezar con wss:// (o ws:// solo para pruebas locales).")
 
     campos = {k: v for k, v in crudo.items() if k in Config.__dataclass_fields__}
+    # Un `null` (lo escribe `init` de la 0.5.0) es "sin dato", no "no fijar": vale
+    # el default. Para no fijarlo, "".
+    for clave in ("codex_model", "codex_reasoning"):
+        if campos.get(clave) is None:
+            campos.pop(clave, None)
     for clave in ("claude_cmd", "agy_cmd", "codex_cmd"):
         if isinstance(campos.get(clave), str):
             campos[clave] = [campos[clave]]
@@ -160,6 +169,10 @@ def cargar(ruta: Optional[Path] = None) -> Config:
     if cfg.codex_sandbox not in CODEX_SANDBOXES:
         raise ConfigError(
             f"'codex_sandbox' tiene que ser uno de {', '.join(CODEX_SANDBOXES)} (es {cfg.codex_sandbox!r})."
+        )
+    if cfg.codex_reasoning and cfg.codex_reasoning not in CODEX_RAZONAMIENTOS:
+        raise ConfigError(
+            f"'codex_reasoning' tiene que ser uno de {', '.join(CODEX_RAZONAMIENTOS)} o vacio (es {cfg.codex_reasoning!r})."
         )
     return cfg
 

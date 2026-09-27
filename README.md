@@ -259,7 +259,8 @@ vas a ver la tarjeta **Autorizar** (paso siguiente).
 | `agy_timeout` | `30m` | (agy) tope de un turno (`--print-timeout`) |
 | `agy_permisos` | `preguntar` | (agy) ver arriba |
 | `agy_dir` | `~/.gemini/antigravity-cli` | (agy) dónde agy guarda sus conversaciones |
-| `codex_model` | — | (codex) modelo; vacío = el de tu `config.toml` de Codex |
+| `codex_model` | `gpt-5.6-terra` | (codex) modelo. Se fija en **cada** turno, aunque tu `config.toml` de Codex diga otro; `""` = no fijarlo y usar el de Codex |
+| `codex_reasoning` | `medium` | (codex) esfuerzo de razonamiento (`low`, `medium`, `high`, `xhigh`, `max`, `ultra`); `""` = no fijarlo |
 | `codex_sandbox` | `read-only` | (codex) `read-only` (lee y conversa), `workspace-write` (edita dentro de `workdir` y de `add_dirs`) o `danger-full-access` (sin restricciones: **solo en un servidor desechable**) |
 | `codex_home` | `~/.codex` | (codex) carpeta de Codex con tu sesión iniciada; solo se exporta `CODEX_HOME` si la cambiás |
 | `max_turnos` | `4` | conversaciones simultáneas |
@@ -336,7 +337,7 @@ Tu configuración (`~/.config/ragnar-bridge/config.json`, con el token del servi
 
 Si preferís, volver a correr el comando de instalación que muestra la app (Paso 4) también actualiza y reinicia.
 
-Versiones que importan: **0.3.2** manda a cada turno el token de tickets de quien escribe; **0.3.3** arregla la URL del MCP de tickets (sin ella el agente decía que no tenía las tools de tickets); **0.5.0** suma Codex CLI.
+Versiones que importan: **0.3.2** manda a cada turno el token de tickets de quien escribe; **0.3.3** arregla la URL del MCP de tickets (sin ella el agente decía que no tenía las tools de tickets); **0.5.0** suma Codex CLI; **0.5.1** fija su modelo (`gpt-5.6-terra`) y razonamiento (`medium`) en cada turno.
 
 ## Desinstalar
 
