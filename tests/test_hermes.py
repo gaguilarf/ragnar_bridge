@@ -58,13 +58,10 @@ async def test_el_bridge_se_anuncia_como_hermes(arrancar, ragnar):
     assert ragnar.auth_frame["agent"] == "hermes"
     agentes = ragnar.auth_frame["agents"]
     assert [a["name"] for a in agentes] == ["hermes"]
-    assert agentes[0]["cli_version"].startswith("Hermes Agent") and agentes[0]["login"] is True
-
-
-async def test_sin_sesion_se_anuncia_login_false(arrancar, ragnar, monkeypatch):
-    monkeypatch.setenv("FAKE_HERMES_DOCTOR_OK", "0")
-    await arrancar()
-    assert ragnar.auth_frame["agents"][0]["login"] is False
+    # Hermes no tiene un comando de solo-estado equivalente a `codex login
+    # status`/`agy models` (RAG-187): "sesion sin comprobar" es honesto,
+    # nunca bloquea que se intente un turno.
+    assert agentes[0]["cli_version"].startswith("Hermes Agent") and agentes[0]["login"] is None
 
 
 async def test_traduce_texto_y_uso_al_formato_de_claude(arrancar, ragnar):

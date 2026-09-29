@@ -21,8 +21,6 @@ argv = sys.argv[1:]
 if argv == ["--version"]:
     print("Hermes Agent v0.21.5+2453.gd0288be (2026.9.24)")
     sys.exit(0)
-if argv == ["doctor"]:
-    sys.exit(0 if os.environ.get("FAKE_HERMES_DOCTOR_OK", "1") == "1" else 1)
 
 assert argv[0] == "chat", argv
 

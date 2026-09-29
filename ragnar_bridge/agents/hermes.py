@@ -35,11 +35,9 @@ de los eventos):
 import json
 import logging
 import os
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..config import Config
 from ..protocolo import Turno
 from .base import Adaptador, Comando, Traductor
 
@@ -56,16 +54,15 @@ class HermesAdaptador(Adaptador):
         return self.cfg.hermes_cmd
 
     def sesion_iniciada(self) -> Optional[bool]:
-        """`hermes doctor` (sin `--live`) solo corre chequeos locales -- no
-        gasta cuota ni llama a nada por red. Un timeout o un fallo al
-        lanzarlo no prueba nada (CLI no instalado, por ejemplo)."""
-        try:
-            salida = subprocess.run(
-                [*self.cmd, "doctor"], capture_output=True, text=True, timeout=30
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return salida.returncode == 0
+        """A diferencia de `codex login status`/`agy models`, Hermes no tiene
+        un comando de solo-estado que distinga "listo para conversar" de
+        "hay algo que mejorar". Probado en vivo (RAG-187): `hermes doctor`
+        devuelve exit 1 por cosas irrelevantes para un turno (una dependencia
+        opcional del navegador con una vulnerabilidad npm, proveedores que
+        esta instancia ni usa) en una instalacion que SI podia conversar
+        normalmente -- `False` ahi seria un aviso equivocado. Mejor no decir
+        nada que decir algo mal."""
+        return None
 
     def cuota(self, version: str) -> Optional[dict]:
         """Hermes no expone un comando de solo lectura para leer limites de
